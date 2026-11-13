@@ -1,0 +1,36 @@
+{
+  "$schema": "../exact-repo/scripts/app.schema.json",
+  "name": "Chirpy",
+  "short_name": "Chirpy",
+  "id": "com.example.chirpy-be219f",
+  "start_url": "/",
+  "display": "standalone",
+  "app": {
+    "id": "com.example.chirpy-be219f",
+    "name": "Chirpy"
+  },
+  "host": {
+    "web": {},
+    "ios": {
+      "minimumOS": "17.0",
+      "deviceFamily": [
+        "iphone",
+        "ipad"
+      ]
+    },
+    "macos": {
+      "minimumOS": "14.0",
+      "window": {
+        "width": 900,
+        "height": 700
+      }
+    }
+  },
+  "deploy": {
+    "store": {
+      "web": "0",
+      "ios": "0",
+      "macos": "0"
+    }
+  }
+}

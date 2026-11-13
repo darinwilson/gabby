@@ -1,0 +1,32 @@
+test "an address that isn't a URL is refused"
+  type "server" "not a server"
+  tap "connect"
+  clock data
+  expect text "server-hint" == "Enter a server address, like mastodon.social."
+
+test "an unreachable server is refused"
+  fail fetch "https://nowhere.example"
+  type "server" "nowhere.example"
+  tap "connect"
+  clock data
+  expect text "server-hint" == "Couldn't reach nowhere.example."
+
+test "a Mastodon server opens its public timeline"
+  type "server" "https://fosstodon.org/"
+  tap "connect"
+  clock data
+  clock settle
+  clock data
+  expect tree has "posts"
+
+test "a wide window shows the server beside its timeline"
+  size 1280x900
+  at "/timeline/fosstodon.org"
+  clock data
+  expect text "instance-title" == "Fosstodon"
+  expect tree has "posts"
+
+test "a narrow window shows no server sidebar"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree missing "instance"
