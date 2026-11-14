@@ -32,5 +32,30 @@
       "ios": "0",
       "macos": "0"
     }
+  },
+  "commands": {
+    "server": [
+      "bun",
+      "fixture/server.ts"
+    ],
+    "test-local": [
+      "bun",
+      "exact.mjs",
+      "test",
+      "web",
+      "--backend",
+      "http://127.0.0.1:4790"
+    ],
+    "verify-local": [
+      "bun",
+      "exact.mjs",
+      "verify",
+      "web",
+      "--backend",
+      "http://127.0.0.1:4790"
+    ]
+  },
+  "server": {
+    "database": false
   }
 }

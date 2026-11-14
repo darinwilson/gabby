@@ -1,7 +1,52 @@
-import type { Answer, Result, Sources } from './app.contract.d.ts';
+import { oauth, type OAuthProvider } from '@exact/oauth';
+import type { Answer, Result, Sources, Store } from './app.contract.d.ts';
 
-// The server is whatever the person types, so any HTTPS origin.
-export const grants = 'net.fetch https:';
+// The live origin is a placeholder: live, each server is reached at its own
+// origin. Tests select the fixture with `--backend`, which serves every server
+// under /<host>.
+const origin = 'https://live.invalid';
+
+const FIXTURE = (origin as string) === 'https://live.invalid' ? '' : origin;
+if (FIXTURE && !/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(FIXTURE)) {
+  throw new Error(`The backend ${FIXTURE} is not the local fixture: tests run only against http://127.0.0.1.`);
+}
+
+const base = (host: string) => (FIXTURE ? `${FIXTURE}/${host}` : `https://${host}`);
+
+// Live, the server is whatever the person types, so any HTTPS origin. Sign-in's
+// grants can't name every origin, so login is limited to SERVERS.
+export const grants = {
+  'https://live.invalid': [
+    'net.fetch https:',
+    'auth.session https://fosstodon.org',
+    'auth.session https://mastodon.social',
+    'auth.session https://mastodon.art',
+    'auth.callback com.example.chirpy-be219f:/oauth',
+    'secret.keep fosstodon.client',
+    'secret.keep fosstodon.session',
+    'secret.keep mastodon-social.client',
+    'secret.keep mastodon-social.session',
+    'secret.keep mastodon-art.client',
+    'secret.keep mastodon-art.session',
+  ],
+  'http://127.0.0.1:4790': [
+    'net.fetch http://127.0.0.1:4790',
+    'auth.session http://127.0.0.1:4790',
+    'auth.callback com.example.chirpy-be219f:/oauth',
+    'secret.keep fosstodon.client',
+    'secret.keep fosstodon.session',
+    'secret.keep mastodon-social.client',
+    'secret.keep mastodon-social.session',
+    'secret.keep mastodon-art.client',
+    'secret.keep mastodon-art.session',
+  ],
+};
+
+const SERVERS: Record<string, string> = {
+  'fosstodon.org': 'fosstodon',
+  'mastodon.social': 'mastodon-social',
+  'mastodon.art': 'mastodon-art',
+};
 
 type Post = Result<'loadTimeline'>['posts'][number];
 
@@ -19,7 +64,7 @@ async function connect(input: string): Promise<Result<'connect'>> {
   if (!host) return { ok: false, error: 'Enter a server address, like mastodon.social.', host: '' };
   let body: unknown;
   try {
-    const response = await fetch(`https://${host}/api/v1/instance`, { exactTimeout: TIMEOUT });
+    const response = await fetch(`${base(host)}/api/v1/instance`, { exactTimeout: TIMEOUT });
     body = response.ok ? await response.json() : null;
   } catch {
     return { ok: false, error: `Couldn't reach ${host}.`, host: '' };
@@ -30,6 +75,68 @@ async function connect(input: string): Promise<Result<'connect'>> {
   return isMastodon
     ? { ok: true, error: '', host }
     : { ok: false, error: `${host} isn't a Mastodon server.`, host: '' };
+}
+
+type Client = { callback: string; id: string; secret: string };
+
+const providers = new Map<string, OAuthProvider>();
+
+// Mastodon has no preregistered clients: each server issues its own, for the
+// callback this build signs in through.
+async function providerFor(host: string, store: Store): Promise<OAuthProvider> {
+  const ready = providers.get(host);
+  if (ready) return ready;
+  const name = `${SERVERS[host]}.client`;
+  const callback = authCallback();
+  let client = JSON.parse(store.get(name) ?? 'null') as Client | null;
+  if (client?.callback !== callback) {
+    const response = await fetch(`${base(host)}/api/v1/apps`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Chirpy', redirect_uris: callback, scopes: 'read' }),
+      exactTimeout: TIMEOUT,
+    });
+    if (!response.ok) throw failure('register');
+    const body = (await response.json()) as { client_id: string; client_secret: string };
+    client = { callback, id: body.client_id, secret: body.client_secret };
+    store.set(name, JSON.stringify(client));
+  }
+  const server = base(host);
+  const provider = oauth({
+    issuer: server,
+    endpoints: { authorization: `${server}/oauth/authorize`, token: `${server}/oauth/token`, revocation: `${server}/oauth/revoke` },
+    clientId: client.id,
+    clientSecret: client.secret,
+    scopes: ['read'],
+    key: `${SERVERS[host]}.session`,
+    apis: [new URL(server).origin],
+  });
+  providers.set(host, provider);
+  return provider;
+}
+
+async function loadAccount(host: string, store: Store): Promise<Result<'loadAccount'>> {
+  if (!(host in SERVERS)) return { host, supported: false, signedIn: false, error: '' };
+  try {
+    const session = await (await providerFor(host, store)).session(store);
+    return { host, supported: true, signedIn: session.signedIn, error: session.error };
+  } catch {
+    return { host, supported: true, signedIn: false, error: `Couldn't prepare login for ${host}.` };
+  }
+}
+
+async function loadProfile(host: string, store: Store): Promise<Result<'loadProfile'>> {
+  const me = (await (await providerFor(host, store)).json(store, `${base(host)}/api/v1/accounts/verify_credentials`)) as {
+    username: string; acct: string; display_name: string; avatar: string;
+  };
+  return { host, name: me.display_name || me.username, handle: `@${me.acct}@${host}`, avatar: me.avatar };
+}
+
+// The servers whose sessions the store still holds.
+async function loadRecent(store: Store): Promise<Result<'loadRecent'>> {
+  const signedIn = await Promise.all(Object.keys(SERVERS).map(async (host) =>
+    store.get(`${SERVERS[host]}.client`) !== null && (await (await providerFor(host, store)).session(store)).signedIn));
+  return Object.keys(SERVERS).filter((_, i) => signedIn[i]).map((host) => ({ host }));
 }
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -123,21 +230,24 @@ function toPost(status: Status): Post {
   };
 }
 
-let feed = { host: '', posts: [] as Post[], hasNext: true };
+let feed = { host: '', home: false, posts: [] as Post[], hasNext: true };
 
-async function append(host: string) {
+async function append(host: string, home: boolean, store: Store) {
   const last = feed.posts.at(-1);
   const query = last ? `&max_id=${last.id}` : '';
-  const response = await fetch(`https://${host}/api/v1/timelines/public?limit=20${query}`, { exactTimeout: TIMEOUT });
+  const url = `${base(host)}/api/v1/timelines/${home ? 'home' : 'public'}?limit=20${query}`;
+  const response = home
+    ? await (await providerFor(host, store)).fetch(store, url)
+    : await fetch(url, { exactTimeout: TIMEOUT });
   if (response.status === 401 || response.status === 422) throw failure('auth-required');
   if (!response.ok) throw failure('http');
   const page = (await response.json()) as Status[];
-  if (feed.host !== host) return;
-  feed = { host, posts: feed.posts.concat(page.map(toPost)), hasNext: page.length > 0 };
+  if (feed.host !== host || feed.home !== home) return;
+  feed = { host, home, posts: feed.posts.concat(page.map(toPost)), hasNext: page.length > 0 };
 }
 
 async function loadInstance(host: string): Promise<Result<'loadInstance'>> {
-  const response = await fetch(`https://${host}/api/v2/instance`, { exactTimeout: TIMEOUT });
+  const response = await fetch(`${base(host)}/api/v2/instance`, { exactTimeout: TIMEOUT });
   if (!response.ok) throw failure('http');
   const body = (await response.json()) as { title?: string; description?: string; thumbnail?: { url?: string } };
   return {
@@ -150,14 +260,20 @@ async function loadInstance(host: string): Promise<Result<'loadInstance'>> {
 
 const sources: Sources = {
   connect: ([input]) => connect(input),
+  loadAccount: ([host], store) => loadAccount(host, store),
+  // The account resource has made the provider, so the browser opens with
+  // nothing awaited before it, as a web popup requires.
+  signIn: ([host], store) => providers.get(host)!.signIn(store),
   loadInstance: ([host]) => loadInstance(host),
-  loadTimeline: async ([host]) => {
-    if (feed.host !== host) feed = { host, posts: [], hasNext: true };
-    if (feed.posts.length === 0) await append(host);
+  loadProfile: ([host], store) => loadProfile(host, store),
+  loadRecent: (_args, store) => loadRecent(store),
+  loadTimeline: async ([host, home], store) => {
+    if (feed.host !== host || feed.home !== home) feed = { host, home, posts: [], hasNext: true };
+    if (feed.posts.length === 0) await append(host, home, store);
     return feed;
   },
-  nextPage: async ([host]) => {
-    await append(host);
+  nextPage: async ([host, home], store) => {
+    await append(host, home, store);
     return { ok: true };
   },
 };

@@ -1,3 +1,5 @@
+fail fetch "https://"
+
 test "an address that isn't a URL is refused"
   type "server" "not a server"
   tap "connect"
@@ -5,19 +7,54 @@ test "an address that isn't a URL is refused"
   expect text "server-hint" == "Enter a server address, like mastodon.social."
 
 test "an unreachable server is refused"
-  fail fetch "https://nowhere.example"
+  fail fetch "http://127.0.0.1:4790/nowhere.example"
   type "server" "nowhere.example"
   tap "connect"
   clock data
   expect text "server-hint" == "Couldn't reach nowhere.example."
 
-test "a Mastodon server opens its public timeline"
+test "a server Chirpy can log in to offers login and its public timeline"
   type "server" "https://fosstodon.org/"
   tap "connect"
   clock data
+  clock data
+  expect tree has "log-in"
+  expect text "options-hint" == ""
+  tap "show-public"
   clock settle
   clock data
   expect tree has "posts"
+
+test "another server says login isn't possible and offers its public timeline"
+  type "server" "hachyderm.io"
+  tap "connect"
+  clock data
+  clock data
+  expect tree missing "log-in"
+  expect text "options-hint" == "You can't log in to hachyderm.io from Chirpy. Login works with fosstodon.org, mastodon.social and mastodon.art."
+  tap "show-public"
+  clock settle
+  clock data
+  expect tree has "posts"
+
+test "editing the address hides the options"
+  type "server" "hachyderm.io"
+  tap "connect"
+  clock data
+  type "server" "hachyderm"
+  expect tree missing "options"
+
+test "logging in shows the home timeline"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  expect text "text-h1" == "A post from someone you follow"
 
 test "a wide window shows the server beside its timeline"
   size 1280x900
@@ -30,3 +67,24 @@ test "a narrow window shows no server sidebar"
   at "/timeline/fosstodon.org"
   clock data
   expect tree missing "instance"
+
+test "a wide home timeline shows who's logged in, and Recent returns to it without logging in"
+  size 1280x900
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  expect text "profile-name" == "Darin"
+  expect text "profile-handle" == "@darin@mastodon.art"
+  tap "switch-instance"
+  clock settle
+  clock data
+  tap "recent-mastodon.art"
+  clock settle
+  clock data
+  expect text "text-h1" == "A post from someone you follow"

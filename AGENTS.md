@@ -27,3 +27,15 @@ command confused you, record it: `bun exact.mjs feedback note "<what happened>"`
 exact2's commit and the last exit code, never output or code. `bun exact.mjs feedback status` says
 whether notes are sent and whether to keep a diary; under `never`, skip all of this.
 <!-- exact:end -->
+
+## Tests (Chirpy)
+
+Run tests with `bun exact.mjs test-local` and verify with `bun exact.mjs verify-local`, never
+plain `test` or `verify`. These pass `--backend http://127.0.0.1:4790`, which points every
+Mastodon server at the fixture in `fixture/server.ts` (each server under `/<host>`), so no
+test touches a live server. Without it the build is live: `app.test.contract`'s top-level
+`fail fetch "https://"` then fails the tests that load data instead of reaching the network.
+Any backend other than `http://127.0.0.1` fails the build (the check at the top of `app.ts`).
+
+A test that needs a new server, route or response adds it to `fixture/server.ts`. Sign-in
+completes against the fixture with the `authorize` step.

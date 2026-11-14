@@ -1,3 +1,5 @@
+use OAuthResult from "@exact/oauth"
+
 shape Connection
   ok: bool
   error: string
@@ -12,11 +14,27 @@ shape Post
 
 shape Timeline
   host: string
+  home: bool
   posts: Post[]
   hasNext: bool
 
 shape Reply
   ok: bool
+
+shape Account
+  host: string
+  supported: bool
+  signedIn: bool
+  error: string
+
+shape Profile
+  host: string
+  name: string
+  handle: string
+  avatar: string
+
+shape Server
+  host: string
 
 shape Viewport
   width: number
@@ -30,36 +48,61 @@ shape Instance
 routes nav
   home "/"
     timeline "/timeline/:host"
+    feed "/feed/:host"
 
 component Chirpy
-  state draft = ""
+  state draft = "" persist
   mutation connected as shape Connection then afterConnect
   derive connectError = match connected { case some(c) => c.error, case none => "" }
   derive showError = connectError != "" and not pending(connected)
   derive connectedHost = match connected { case some(c) => (c.ok ? c.host : ""), case none => "" }
-  derive host = top(nav).name == "timeline" ? top(nav).params.host : ""
-  resource timeline = loadTimeline(host) when host != "" as shape Timeline else empty() transient
+  state server = ""
+  resource account = loadAccount(server) when server != "" as shape Account else empty()
+  derive accountReady = account.host == server
+  resource recent = loadRecent() as shape Server[] else empty()
+  mutation signedIn as shape OAuthResult refreshes account, recent then afterSignIn
+  derive signInOk = match signedIn { case some(r) => r.ok, case none => false }
+  derive signInError = match signedIn { case some(r) => (r.ok or r.code == "cancelled" ? "" : r.error), case none => "" }
+  derive accountError = accountReady ? (account.error != "" ? account.error : signInError) : ""
+  derive optionsHint = accountError != "" ? accountError : (accountReady and not account.supported ? `You can't log in to ${server} from Chirpy. Login works with fosstodon.org, mastodon.social and mastodon.art.` : "")
+  derive home = top(nav).name == "feed"
+  derive host = top(nav).name == "timeline" or home ? top(nav).params.host : ""
+  resource timeline = loadTimeline(host, home) when host != "" as shape Timeline else empty() transient
   mutation more as shape Reply refreshes timeline
   derive loading = pending(timeline) or pending(more)
-  derive posts = timeline.host == host ? timeline.posts : []
+  derive posts = timeline.host == host and timeline.home == home ? timeline.posts : []
   resource viewport = exactViewport() as shape Viewport
   derive wide = viewport.width >= 768
   derive centered = wide and viewport.width >= 1264
   resource instance = loadInstance(host) when host != "" and wide as shape Instance else empty()
+  resource profile = loadProfile(host) when home and wide as shape Profile else empty()
   derive rows = pending(more) ? posts.concat([Post(id="loading", name="", handle="", avatar="", text="")]) : posts
   derive timelineError = match failure(timeline) { case some(f) => (f.code == "auth-required" ? "This server only shows its public timeline to signed-in users." : "Couldn't load the timeline."), case none => "" }
 
   action edit(v: string)
     draft = v
+    server = ""
   action connect
     if draft.trim() != "" and not pending(connected)
       send connected = connect(draft.trim())
   action afterConnect
     if connectedHost != ""
-      nav = push(nav, path("timeline", connectedHost))
+      server = connectedHost
+  action signIn
+    if accountReady and account.supported and not pending(signedIn)
+      send signedIn = signIn(server)
+  action afterSignIn
+    if signInOk
+      nav = go(nav, path("feed", server))
+  action showFeed
+    nav = go(nav, path("feed", server))
+  action switchInstance
+    nav = back(nav)
+  action showPublic
+    nav = push(nav, path("timeline", server))
   action loadMore
     if timeline.hasNext and not loading
-      send more = nextPage(host)
+      send more = nextPage(host, home)
   action retry
     refresh timeline
   action back
@@ -71,7 +114,7 @@ component Chirpy
     main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow width="100%" height="100%"
       for e in stack(nav) key=e.id
         if e.name == "home"
-          column navigationKey=`${e.id}` navigationScroll="server-form" position="absolute" inset=0 display="flex" flex-direction="column"
+          column navigationKey=`${e.id}` navigationScroll="server-form" navigationSplit=(home ? "none" : "320") position="absolute" inset=0 display="flex" flex-direction="column"
             header
               text "Chirpy" role="heading" aria-level=1
             list id="server-form" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
@@ -87,19 +130,54 @@ component Chirpy
                 footer
                   text (showError ? connectError : "Enter the address of a Mastodon server.")
                     color=(showError ? "-exact-system-red" : "-exact-secondary-label") testId="server-hint"
-        if e.name == "timeline"
+              if server != ""
+                section testId="options"
+                  if accountReady and account.supported
+                    row
+                      if pending(signedIn)
+                        progress aria-label="Logging in" testId="logging-in"
+                      else if account.signedIn
+                        button press=showFeed testId="show-feed"
+                          text "Show Home Timeline"
+                      else
+                        button press=signIn testId="log-in"
+                          text "Log In"
+                  row
+                    button press=showPublic testId="show-public"
+                      text "Show Public Timeline"
+                  footer
+                    text optionsHint color=(accountError != "" ? "-exact-system-red" : "-exact-secondary-label") testId="options-hint"
+              if recent.length > 0
+                section testId="recent"
+                  header
+                    text "Recent"
+                  for r in recent key=r.host
+                    link href=path("feed", r.host) testId=`recent-${r.host}`
+                      text r.host
+                      image "symbol:forward-chevron"
+        if e.name == "timeline" or e.name == "feed"
           column navigationKey=`${e.id}` navigationScroll="posts" position="absolute" inset=0 display="flex" flex-direction="column"
             header
               text e.params.host role="heading" aria-level=2
             row flex=1 min-height=0
               if wide and instance.domain == host
-                aside width="18.75rem" flex-shrink=0 overflow-y="auto" padding=16 gap=12 display="flex" flex-direction="column" testId="instance"
-                  if instance.thumbnail != ""
-                    image instance.thumbnail width="100%" aspect-ratio="1.91" object-fit="cover" border-radius=12 alt=""
-                  text instance.title font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="instance-title"
-                  link href=`https://${instance.domain}` testId="instance-url"
-                    text `https://${instance.domain}` overflow-wrap="break-word"
-                  text instance.description white-space="pre-line" color="-exact-secondary-label" overflow-wrap="break-word" testId="instance-description"
+                aside width=(centered ? "calc(50% - 300px)" : "18.75rem") flex-shrink=0 overflow-y="auto" box-sizing="border-box" padding=16 testId="instance"
+                  column width="100%" max-width="18.75rem" margin-left="auto" margin-right="auto" gap=12 display="flex" flex-direction="column"
+                    if home and profile.host == host
+                      row gap=12 align-items="center" testId="profile"
+                        image profile.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
+                        column flex=1 min-width=0 gap=2
+                          text profile.name overflow-wrap="break-word" font-weight=600 testId="profile-name"
+                          text profile.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label" testId="profile-handle"
+                    if instance.thumbnail != ""
+                      image instance.thumbnail width="100%" aspect-ratio="1.91" object-fit="cover" border-radius=12 alt=""
+                    text instance.title font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="instance-title"
+                    link href=`https://${instance.domain}` testId="instance-url"
+                      text `https://${instance.domain}` overflow-wrap="break-word"
+                    text instance.description white-space="pre-line" color="-exact-secondary-label" overflow-wrap="break-word" testId="instance-description"
+                    if home
+                      button press=switchInstance buttonStyle="bordered" testId="switch-instance"
+                        text "Switch Instance"
               column flex=1 min-width=0 display="flex" flex-direction="column"
                 if timelineError != "" and posts.length == 0
                   column padding=16 gap=12 align-items="center"
@@ -110,7 +188,7 @@ component Chirpy
                   column padding=16 align-items="center"
                     progress aria-label="Loading" testId="loading"
                 else
-                  list id="posts" testId="posts" virtualized=true appearance="none" flex=1 min-height=0 padding-right=(centered and instance.domain == host ? "20.75rem" : "0")
+                  list id="posts" testId="posts" virtualized=true appearance="none" flex=1 min-height=0
                     estimated-item-height=120 reachend=loadMore reach-margin="100%"
                     for p in rows key=p.id
                       row gap=12 padding=(wide ? 16 : 12) align-items="flex-start" width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto"
@@ -123,3 +201,6 @@ component Chirpy
                             text p.name overflow-wrap="break-word" font-weight=600 testId=`name-${p.id}`
                             text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
                             text p.text markup="markdown" overflow-wrap="break-word" margin-top=4 testId=`text-${p.id}`
+
+              if centered and instance.domain == host
+                column width="calc(50% - 300px)" flex-shrink=0
