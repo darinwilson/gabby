@@ -1,5 +1,5 @@
 <!-- exact:begin (exact new writes this block; bun exact.mjs update rewrites it) -->
-# chirpy: an Exact app
+# gabby: an Exact app
 
 `app.contract` is the view, `app.ts` the data module, `app.test.contract` the tests, `app.json`
 the manifest: set `app.name` and `app.id` before building. The app uses Exact at
@@ -28,7 +28,7 @@ exact2's commit and the last exit code, never output or code. `bun exact.mjs fee
 whether notes are sent and whether to keep a diary; under `never`, skip all of this.
 <!-- exact:end -->
 
-## Tests (Chirpy)
+## Tests (Gabby)
 
 Run tests with `bun exact.mjs test-local` and verify with `bun exact.mjs verify-local`, never
 plain `test` or `verify`. These pass `--backend http://127.0.0.1:4790`, which points every

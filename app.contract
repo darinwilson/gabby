@@ -52,7 +52,7 @@ routes nav
     feed "/feed/:host"
     tag "/tag/:host/:tag"
 
-component Chirpy
+component Gabby
   state draft = "" persist
   mutation connected as shape Connection then afterConnect
   derive connectError = match connected { case some(c) => c.error, case none => "" }
@@ -66,7 +66,7 @@ component Chirpy
   derive signInOk = match signedIn { case some(r) => r.ok, case none => false }
   derive signInError = match signedIn { case some(r) => (r.ok or r.code == "cancelled" ? "" : r.error), case none => "" }
   derive accountError = accountReady ? (account.error != "" ? account.error : signInError) : ""
-  derive optionsHint = accountError != "" ? accountError : (accountReady and not account.supported ? `You can't log in to ${server} from Chirpy. Login works with fosstodon.org, mastodon.social and mastodon.art.` : "")
+  derive optionsHint = accountError != "" ? accountError : (accountReady and not account.supported ? `You can't log in to ${server} from Gabby. Login works with fosstodon.org, mastodon.social and mastodon.art.` : "")
   derive home = top(nav).name == "feed"
   derive inFeed = stack(nav).map(e => e.name == "feed").includes(true)
   derive tag = top(nav).name == "tag" ? top(nav).params.tag : ""
@@ -120,7 +120,7 @@ component Chirpy
         if e.name == "home"
           column navigationKey=`${e.id}` navigationScroll="server-form" navigationSplit=(inFeed ? "none" : "320") position="absolute" inset=0 display="flex" flex-direction="column"
             header
-              text "Chirpy" role="heading" aria-level=1
+              text "Gabby" role="heading" aria-level=1
             list id="server-form" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
               section
                 row gap=8 align-items="center"

@@ -21,7 +21,7 @@ export const grants = {
     'auth.session https://fosstodon.org',
     'auth.session https://mastodon.social',
     'auth.session https://mastodon.art',
-    'auth.callback com.example.chirpy-be219f:/oauth',
+    'auth.callback com.example.gabby-be219f:/oauth',
     'secret.keep fosstodon.client',
     'secret.keep fosstodon.session',
     'secret.keep mastodon-social.client',
@@ -32,7 +32,7 @@ export const grants = {
   'http://127.0.0.1:4790': [
     'net.fetch http://127.0.0.1:4790',
     'auth.session http://127.0.0.1:4790',
-    'auth.callback com.example.chirpy-be219f:/oauth',
+    'auth.callback com.example.gabby-be219f:/oauth',
     'secret.keep fosstodon.client',
     'secret.keep fosstodon.session',
     'secret.keep mastodon-social.client',
@@ -93,7 +93,7 @@ async function providerFor(host: string, store: Store): Promise<OAuthProvider> {
     const response = await fetch(`${base(host)}/api/v1/apps`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_name: 'Chirpy', redirect_uris: callback, scopes: 'read' }),
+      body: JSON.stringify({ client_name: 'Gabby', redirect_uris: callback, scopes: 'read' }),
       exactTimeout: TIMEOUT,
     });
     if (!response.ok) throw failure('register');

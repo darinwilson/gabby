@@ -1,13 +1,13 @@
 {
   "$schema": "../exact-repo/scripts/app.schema.json",
-  "name": "Chirpy",
-  "short_name": "Chirpy",
-  "id": "com.example.chirpy-be219f",
+  "name": "Gabby",
+  "short_name": "Gabby",
+  "id": "com.example.gabby-be219f",
   "start_url": "/",
   "display": "standalone",
   "app": {
-    "id": "com.example.chirpy-be219f",
-    "name": "Chirpy"
+    "id": "com.example.gabby-be219f",
+    "name": "Gabby"
   },
   "host": {
     "web": {},

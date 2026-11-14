@@ -13,7 +13,7 @@ test "an unreachable server is refused"
   clock data
   expect text "server-hint" == "Couldn't reach nowhere.example."
 
-test "a server Chirpy can log in to offers login and its public timeline"
+test "a server Gabby can log in to offers login and its public timeline"
   type "server" "https://fosstodon.org/"
   tap "connect"
   clock data
@@ -31,7 +31,7 @@ test "another server says login isn't possible and offers its public timeline"
   clock data
   clock data
   expect tree missing "log-in"
-  expect text "options-hint" == "You can't log in to hachyderm.io from Chirpy. Login works with fosstodon.org, mastodon.social and mastodon.art."
+  expect text "options-hint" == "You can't log in to hachyderm.io from Gabby. Login works with fosstodon.org, mastodon.social and mastodon.art."
   tap "show-public"
   clock settle
   clock data
