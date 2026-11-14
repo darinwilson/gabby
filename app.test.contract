@@ -55,6 +55,7 @@ test "logging in shows the home timeline"
   clock settle
   clock data
   expect text "text-h1" == "A post from someone you follow"
+  expect text "timeline-title" == "Home"
 
 test "a wide window shows the server beside its timeline"
   size 1280x900
@@ -88,3 +89,17 @@ test "a wide home timeline shows who's logged in, and Recent returns to it witho
   clock settle
   clock data
   expect text "text-h1" == "A post from someone you follow"
+
+test "timelines are titled Home or Public"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect text "timeline-title" == "Public"
+
+test "a hashtag shows its posts under its name, and Back returns"
+  at "/tag/fosstodon.org/birds"
+  clock data
+  expect text "timeline-title" == "#birds"
+  expect text "text-t1" == "A post about birds"
+  tap "back"
+  clock settle
+  expect tree missing "back"

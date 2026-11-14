@@ -40,7 +40,12 @@ Bun.serve({
       case 'GET /api/v2/instance':
         return json({ title: TITLES[host], description: `${TITLES[host]}, served by the fixture.`, thumbnail: { url: '' } });
       case 'GET /api/v1/timelines/public':
-        return json(firstPage ? [status('2', host, 'A public post'), status('1', host, 'An older public post')] : []);
+        return json(firstPage ? [
+          status('2', host, `A public post <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a>`),
+          status('1', host, 'An older public post'),
+        ] : []);
+      case 'GET /api/v1/timelines/tag/birds':
+        return json(firstPage ? [status('t1', host, 'A post about birds')] : []);
       case 'GET /api/v1/timelines/home':
         if (req.headers.get('Authorization') !== `Bearer ${TOKEN}`) return json({ error: 'The access token is invalid' }, 401);
         return json(firstPage ? [status('h1', host, 'A post from someone you follow')] : []);

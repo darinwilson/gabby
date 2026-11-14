@@ -15,6 +15,7 @@ shape Post
 shape Timeline
   host: string
   home: bool
+  tag: string
   posts: Post[]
   hasNext: bool
 
@@ -49,6 +50,7 @@ routes nav
   home "/"
     timeline "/timeline/:host"
     feed "/feed/:host"
+    tag "/tag/:host/:tag"
 
 component Chirpy
   state draft = "" persist
@@ -66,11 +68,13 @@ component Chirpy
   derive accountError = accountReady ? (account.error != "" ? account.error : signInError) : ""
   derive optionsHint = accountError != "" ? accountError : (accountReady and not account.supported ? `You can't log in to ${server} from Chirpy. Login works with fosstodon.org, mastodon.social and mastodon.art.` : "")
   derive home = top(nav).name == "feed"
-  derive host = top(nav).name == "timeline" or home ? top(nav).params.host : ""
-  resource timeline = loadTimeline(host, home) when host != "" as shape Timeline else empty() transient
+  derive inFeed = stack(nav).map(e => e.name == "feed").includes(true)
+  derive tag = top(nav).name == "tag" ? top(nav).params.tag : ""
+  derive host = top(nav).name == "timeline" or home or tag != "" ? top(nav).params.host : ""
+  resource timeline = loadTimeline(host, home, tag) when host != "" as shape Timeline else empty() transient
   mutation more as shape Reply refreshes timeline
   derive loading = pending(timeline) or pending(more)
-  derive posts = timeline.host == host and timeline.home == home ? timeline.posts : []
+  derive posts = timeline.host == host and timeline.home == home and timeline.tag == tag ? timeline.posts : []
   resource viewport = exactViewport() as shape Viewport
   derive wide = viewport.width >= 768
   derive centered = wide and viewport.width >= 1264
@@ -102,7 +106,7 @@ component Chirpy
     nav = push(nav, path("timeline", server))
   action loadMore
     if timeline.hasNext and not loading
-      send more = nextPage(host, home)
+      send more = nextPage(host, home, tag)
   action retry
     refresh timeline
   action back
@@ -114,7 +118,7 @@ component Chirpy
     main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow width="100%" height="100%"
       for e in stack(nav) key=e.id
         if e.name == "home"
-          column navigationKey=`${e.id}` navigationScroll="server-form" navigationSplit=(home ? "none" : "320") position="absolute" inset=0 display="flex" flex-direction="column"
+          column navigationKey=`${e.id}` navigationScroll="server-form" navigationSplit=(inFeed ? "none" : "320") position="absolute" inset=0 display="flex" flex-direction="column"
             header
               text "Chirpy" role="heading" aria-level=1
             list id="server-form" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
@@ -155,10 +159,13 @@ component Chirpy
                     link href=path("feed", r.host) testId=`recent-${r.host}`
                       text r.host
                       image "symbol:forward-chevron"
-        if e.name == "timeline" or e.name == "feed"
+        if e.name == "timeline" or e.name == "feed" or e.name == "tag"
           column navigationKey=`${e.id}` navigationScroll="posts" position="absolute" inset=0 display="flex" flex-direction="column"
             header
-              text e.params.host role="heading" aria-level=2
+              if e.name == "tag"
+                button id="back" press=back testId="back"
+                  text "Back"
+              text (e.name == "feed" ? "Home" : e.name == "tag" ? `#${e.params.tag}` : "Public") role="heading" aria-level=2 testId="timeline-title"
             row flex=1 min-height=0
               if wide and instance.domain == host
                 aside width=(centered ? "calc(50% - 300px)" : "18.75rem") flex-shrink=0 overflow-y="auto" box-sizing="border-box" padding=16 testId="instance"

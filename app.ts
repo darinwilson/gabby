@@ -162,7 +162,7 @@ const INLINE: Record<string, string> = { strong: '**', b: '**', em: '*', i: '*',
 
 // Mastodon's post HTML is a small allowlist (p, br, a, span, strong, em, del, code, pre,
 // blockquote, ul, ol, li), which maps onto Markdown; other tags keep only their text.
-function markdown(html: string): string {
+function markdown(html: string, host: string): string {
   type Frame = { tag: string; out: string; href?: string; skip?: boolean; ellipsis?: boolean; index?: number };
   const stack: Frame[] = [{ tag: '', out: '' }];
   const top = () => stack[stack.length - 1];
@@ -180,7 +180,7 @@ function markdown(html: string): string {
       stack.push({
         tag,
         out: '',
-        href: tag === 'a' ? decode(/href="([^"]*)"/i.exec(attrs)?.[1] ?? '') : undefined,
+        href: tag === 'a' ? link(decode(/href="([^"]*)"/i.exec(attrs)?.[1] ?? ''), cls, host) : undefined,
         skip: tag === 'span' && cls.includes('invisible'),
         ellipsis: tag === 'span' && cls.includes('ellipsis'),
         index: 0,
@@ -211,6 +211,12 @@ function markdown(html: string): string {
   return top().out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// A hashtag opens in the app, on the server whose timeline shows it.
+function link(href: string, cls: string[], host: string): string {
+  const name = cls.includes('hashtag') ? /\/tags\/([^/?#]+)/.exec(href)?.[1] : undefined;
+  return name ? `/tag/${host}/${name}` : href;
+}
+
 type Status = {
   id: string;
   content: string;
@@ -218,7 +224,7 @@ type Status = {
   reblog: Status | null;
 };
 
-function toPost(status: Status): Post {
+function toPost(status: Status, host: string): Post {
   const shown = status.reblog ?? status;
   const { account } = shown;
   return {
@@ -226,24 +232,41 @@ function toPost(status: Status): Post {
     name: account.display_name || account.username,
     handle: `@${account.acct}`,
     avatar: account.avatar,
-    text: markdown(shown.content),
+    text: markdown(shown.content, host),
   };
 }
 
-let feed = { host: '', home: false, posts: [] as Post[], hasNext: true };
+type Feed = Result<'loadTimeline'>;
 
-async function append(host: string, home: boolean, store: Store) {
+// Kept per timeline, so Back from a hashtag returns to the posts it left.
+const feeds = new Map<string, Feed>();
+
+function feedFor(host: string, home: boolean, tag: string): Feed {
+  const key = JSON.stringify([host, home, tag]);
+  let feed = feeds.get(key);
+  if (!feed) feeds.set(key, feed = { host, home, tag, posts: [], hasNext: true });
+  return feed;
+}
+
+async function signedIn(host: string, store: Store): Promise<boolean> {
+  return host in SERVERS && store.get(`${SERVERS[host]}.client`) !== null
+    && (await (await providerFor(host, store)).session(store)).signedIn;
+}
+
+async function append(feed: Feed, store: Store) {
+  const { host, home, tag } = feed;
   const last = feed.posts.at(-1);
   const query = last ? `&max_id=${last.id}` : '';
-  const url = `${base(host)}/api/v1/timelines/${home ? 'home' : 'public'}?limit=20${query}`;
-  const response = home
+  const path = tag ? `tag/${encodeURIComponent(tag)}` : home ? 'home' : 'public';
+  const url = `${base(host)}/api/v1/timelines/${path}?limit=20${query}`;
+  const response = home || (tag && await signedIn(host, store))
     ? await (await providerFor(host, store)).fetch(store, url)
     : await fetch(url, { exactTimeout: TIMEOUT });
   if (response.status === 401 || response.status === 422) throw failure('auth-required');
   if (!response.ok) throw failure('http');
   const page = (await response.json()) as Status[];
-  if (feed.host !== host || feed.home !== home) return;
-  feed = { host, home, posts: feed.posts.concat(page.map(toPost)), hasNext: page.length > 0 };
+  feed.posts = feed.posts.concat(page.map((s) => toPost(s, host)));
+  feed.hasNext = page.length > 0;
 }
 
 async function loadInstance(host: string): Promise<Result<'loadInstance'>> {
@@ -267,13 +290,13 @@ const sources: Sources = {
   loadInstance: ([host]) => loadInstance(host),
   loadProfile: ([host], store) => loadProfile(host, store),
   loadRecent: (_args, store) => loadRecent(store),
-  loadTimeline: async ([host, home], store) => {
-    if (feed.host !== host || feed.home !== home) feed = { host, home, posts: [], hasNext: true };
-    if (feed.posts.length === 0) await append(host, home, store);
-    return feed;
+  loadTimeline: async ([host, home, tag], store) => {
+    const feed = feedFor(host, home, tag);
+    if (feed.posts.length === 0) await append(feed, store);
+    return { ...feed };
   },
-  nextPage: async ([host, home], store) => {
-    await append(host, home, store);
+  nextPage: async ([host, home, tag], store) => {
+    await append(feedFor(host, home, tag), store);
     return { ok: true };
   },
 };
