@@ -29,4 +29,38 @@ bun exact.mjs test-local
 bun exact.mjs verify-local
 ```
 
+## Sandbox server
+
+To try Gabby against a real server without posting to a public one, run a local
+[GoToSocial](https://gotosocial.org/) server filled with test accounts and posts:
+
+```sh
+bun exact.mjs sandbox        # in a separate terminal; Ctrl-C stops it
+bun exact.mjs web-sandbox    # Gabby's dev server, pointed at the sandbox
+```
+
+The first run downloads GoToSocial into `.sandbox/` (on macOS it builds it from source, which
+needs Go: `brew install go`), creates the accounts and posts in `sandbox/seed.ts`, and keeps the
+data in `.sandbox/data`. `bun exact.mjs sandbox-reset` deletes the data and seeds it again;
+`bun sandbox/sandbox.ts clean` removes everything, GoToSocial included.
+
+The sandbox takes Gabby's local backend address (`http://127.0.0.1:4790`), so every server
+address you enter in Gabby reaches it, and it can't run while `test-local` or `verify-local`
+does. Log in through `fosstodon.org`, `mastodon.social` or `mastodon.art` (the servers Gabby
+can sign in to) with one of these accounts:
+
+| Email | Account |
+|---|---|
+| `alice@example.test` | admin; followed by bob, carol and dave; has pinned posts |
+| `bob@example.test` | posts photos and boosts |
+| `carol@example.test` | a reply thread, a poll, a content warning, a direct message |
+| `dave@example.test` | no display name; 26 posts, enough to page through a timeline; has asked to follow erin |
+| `erin@example.test` | locked, with no posts and a pending follow request from dave |
+
+Every account's password is `gabby sandbox password 2026`. Signed out, GoToSocial shows the public
+timeline but refuses hashtag timelines and account lookups. GoToSocial's API can't backdate a
+post, so every seeded post is from the moment the sandbox was seeded.
+
+A start that is stopped before seeding finishes seeds again next time.
+
 `bun exact.mjs help` lists all commands.

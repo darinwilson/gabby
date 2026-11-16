@@ -53,6 +53,23 @@
       "web",
       "--backend",
       "http://127.0.0.1:4790"
+    ],
+    "sandbox": [
+      "bun",
+      "sandbox/sandbox.ts",
+      "start"
+    ],
+    "sandbox-reset": [
+      "bun",
+      "sandbox/sandbox.ts",
+      "reset"
+    ],
+    "web-sandbox": [
+      "env",
+      "EXACT_BACKEND_ORIGIN=http://127.0.0.1:4790",
+      "bun",
+      "exact.mjs",
+      "web"
     ]
   },
   "server": {
