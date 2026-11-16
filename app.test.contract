@@ -167,7 +167,7 @@ test "a reply shows what it replies to, and opens another post over it"
   clock data
   expect text "focus-text-c2" == "A reply to the reply"
   expect text "thread-text-c1" == "A reply"
-  tap "thread-post-c1"
+  tap "thread-open-c1"
   clock settle
   clock data
   expect text "focus-text-c1" == "A reply"
@@ -187,7 +187,7 @@ test "liking a post from its view counts it there and in the timeline"
   clock data
   clock settle
   clock data
-  tap "post-h1"
+  tap "open-h1"
   clock settle
   clock data
   expect text "focus-favourites-h1" == "1"
@@ -208,3 +208,36 @@ test "a hashtag in a post opens the hashtag, not the post"
   clock data
   expect tree missing "post-title"
   expect text "timeline-title" == "#birds"
+
+test "a boosted post opens the post it boosted"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "open-h2"
+  clock settle
+  clock data
+  expect text "focus-text-b1" == "A post someone you follow boosted"
+  expect tree missing "focus-boosted-b1"
+
+test "liking a post in a timeline doesn't open it"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "favourite-h1"
+  clock data
+  clock data
+  clock settle
+  expect text "favourites-h1" == "2"
+  expect tree missing "post-title"

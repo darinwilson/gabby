@@ -45,6 +45,7 @@ const POSTS: Record<string, { text: (host: string) => string; parent?: string }>
   'c1': { text: () => 'A reply', parent: '2' },
   'c2': { text: () => 'A reply to the reply', parent: 'c1' },
   'h1': { text: () => 'A post from someone you follow' },
+  'b1': { text: () => 'A post someone you follow boosted' },
 };
 const post = (id: string, host: string) => status(id, host, POSTS[id].text(host));
 const ancestors = (id: string): string[] => {
@@ -119,7 +120,7 @@ Bun.serve({
         if (!authorized(req)) return unauthorized();
         return json(firstPage ? [
           post('h1', host),
-          boost('h2', host, status('b1', host, 'A post someone you follow boosted')),
+          boost('h2', host, post('b1', host)),
         ] : []);
       case 'GET /api/v1/accounts/verify_credentials':
         if (!authorized(req)) return unauthorized();

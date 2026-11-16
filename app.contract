@@ -262,7 +262,7 @@ component PostView
   resource thread = loadThread(host, id) as shape Thread else empty() transient
   mutation acted as shape Reply refreshes thread then afterAct
   derive ready = thread.host == host and thread.id == id
-  derive error = match failure(thread) { case some(f) => (f.code == "not-found" ? "This post isn't available." : f.code == "auth-required" ? "This server only shows posts to signed-in users." : "Couldn't load the post."), case none => "" }
+  derive error = match failure(thread) { case some(f) => (f.code == "not-found" ? "This post isn't available." : f.code == "auth-required" ? "This server only shows posts to signed-in users." : f.code == "auth-expired" ? "Log in again to see this post." : "Couldn't load the post."), case none => "" }
 
   action open(p: Post)
     if p.statusId != id
@@ -312,6 +312,7 @@ component PostRow
   action pressed
     if not tagged
       open(p)
+    tagged = false
   props
     p: Post
     wide: bool
@@ -323,33 +324,35 @@ component PostRow
     favourite: action
     openTag: action
   view
-    row press=pressed pointerdown=down gap=12 padding=(wide ? 16 : 12) align-items="flex-start" width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto"
+    row gap=12 padding=(wide ? 16 : 12) align-items="flex-start" width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto"
       border-style="solid" border-color="-exact-separator" border-width=(wide ? "0 1px 1px" : "0 0 1px") testId=`${prefix}post-${p.id}`
       if p.id == "loading"
         progress aria-label="Loading" testId="loading"
       else
         image p.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
-        column flex=1 min-width=0 gap=2
-          if p.boostedBy != ""
-            row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2
-              image "symbol:repeat" aria-hidden=true
-              if p.boostedAvatar != ""
-                image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
-              text `${p.boostedBy} boosted` testId=`${prefix}boosted-${p.id}`
-          row gap=6 align-items="center" flex-wrap="wrap"
-            text p.name flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
-            image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
-              aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
-              font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
-            if not focused
-              text "·" font="-exact-footnote" color="-exact-secondary-label" aria-hidden=true
-              time datetime=p.posted format="relative" max-width="100%" font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}time-${p.id}`
-          text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
-          text p.text markup="markdown" atoms="hashtag" atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
-          if focused
-            row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
-              time datetime=p.posted format="date-medium"
-              time datetime=p.posted format="time-short"
+        column flex=1 min-width=0
+          // The press is on the content only, so the action buttons aren't nested in it.
+          column press=pressed pointerdown=down gap=2 testId=`${prefix}open-${p.id}`
+            if p.boostedBy != ""
+              row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2
+                image "symbol:repeat" aria-hidden=true
+                if p.boostedAvatar != ""
+                  image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
+                text `${p.boostedBy} boosted` testId=`${prefix}boosted-${p.id}`
+            row gap=6 align-items="center" flex-wrap="wrap"
+              text p.name flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
+              image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
+                aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
+                font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
+              if not focused
+                text "·" font="-exact-footnote" color="-exact-secondary-label" aria-hidden=true
+                time datetime=p.posted format="relative" max-width="100%" font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}time-${p.id}`
+            text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
+            text p.text markup="markdown" atoms="hashtag" atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
+            if focused
+              row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
+                time datetime=p.posted format="date-medium"
+                time datetime=p.posted format="time-short"
           row gap=16 margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
             button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
               image "symbol:reply" aria-hidden=true
