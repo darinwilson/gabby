@@ -27,6 +27,27 @@ shape Post
   favourited: bool
   accountId: string
   pinned: bool
+  media: Media[]
+  sensitive: bool
+  card: Card
+
+// A picture, video, looping GIF, sound or (not yet processed by the server) other file in a post.
+shape Media
+  id: string
+  kind: string
+  url: string
+  preview: string
+  description: string
+  // Width over height, or 0 when the server didn't say.
+  ratio: number
+
+// The preview of the link a post shares; url is "" when there is none.
+shape Card
+  url: string
+  title: string
+  description: string
+  image: string
+  provider: string
 
 shape Timeline
   host: string
@@ -167,7 +188,7 @@ component Gabby
   derive centered = wide and viewport.width >= 1264
   resource instance = loadInstance(host) when host != "" and wide as shape Instance else empty()
   resource profile = loadProfile(host) when home and wide as shape Profile else empty()
-  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false)]) : posts
+  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false, media=[], sensitive=false, card=Card(url="", title="", description="", image="", provider=""))]) : posts
   derive timelineError = match failure(timeline) { case some(f) => (f.code == "auth-required" ? "This server only shows its public timeline to signed-in users." : "Couldn't load the timeline."), case none => "" }
 
   action edit(v: string)
@@ -647,6 +668,9 @@ component ReplyView
 component PostRow
   // A hashtag's press also reaches the row's; the row skips the press that opened a hashtag.
   state tagged = false
+  state revealed = false
+  action reveal
+    revealed = not revealed
   action down
     tagged = false
   action tag(e: AtomEvent)
@@ -706,6 +730,40 @@ component PostRow
               row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
                 time datetime=p.posted format="date-medium"
                 time datetime=p.posted format="time-short"
+          if p.media.length > 0
+            column gap=6 margin-top=8 testId=`${prefix}media-${p.id}`
+              if p.sensitive
+                button press=reveal aria-expanded=revealed align-self="flex-start" testId=`${prefix}reveal-${p.id}`
+                  text (revealed ? "Hide sensitive media" : "Show sensitive media")
+              if revealed or not p.sensitive
+                row gap=4 flex-wrap="wrap"
+                  for m in p.media key=m.id
+                    if m.kind == "image"
+                      link href=m.url aria-label=(m.description != "" ? m.description : "Picture") flex-grow=1 flex-basis=(p.media.length > 1 ? "40%" : "100%") min-width=0
+                        border-radius=8 overflow="hidden" testId=`${prefix}image-${p.id}-${m.id}`
+                        image m.url alt=m.description width="100%" display="block" object-fit="cover" background-color="-exact-fill"
+                          aspect-ratio=(p.media.length > 1 or m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio)
+                    else if m.kind == "video" or m.kind == "gifv"
+                      video m.url poster=m.preview controls=(m.kind == "video") autoplay=(m.kind == "gifv") muted=(m.kind == "gifv") loop=(m.kind == "gifv")
+                        playsinline=true preload="metadata" aria-label=(m.description != "" ? m.description : m.kind == "gifv" ? "Animated picture" : "Video")
+                        flex-basis="100%" min-width=0 aspect-ratio=(m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio) background-color="-exact-fill" border-radius=8
+                        testId=`${prefix}video-${p.id}-${m.id}`
+                    else if m.kind == "audio"
+                      audio m.url controls=true preload="metadata" aria-label=(m.description != "" ? m.description : "Sound")
+                        flex-basis="100%" min-width=0 testId=`${prefix}audio-${p.id}-${m.id}`
+                    else
+                      link href=m.url flex-basis="100%" padding=12 border-radius=8 background-color="-exact-fill" testId=`${prefix}file-${p.id}-${m.id}`
+                        text (m.description != "" ? `Open attachment: ${m.description}` : "Open attachment") overflow-wrap="break-word"
+          else if p.card.url != ""
+            link href=p.card.url margin-top=8 display="flex" flex-direction="column" border-style="solid" border-width=1 border-color="-exact-separator"
+              border-radius=8 overflow="hidden" color="-exact-label" testId=`${prefix}card-${p.id}`
+              if p.card.image != ""
+                image p.card.image alt="" width="100%" display="block" aspect-ratio=1.91 object-fit="cover" background-color="-exact-fill"
+              column padding=12 gap=2
+                text p.card.provider font="-exact-footnote" color="-exact-secondary-label" overflow-wrap="break-word" testId=`${prefix}card-provider-${p.id}`
+                text p.card.title font-weight=600 overflow-wrap="break-word" testId=`${prefix}card-title-${p.id}`
+                if p.card.description != ""
+                  text p.card.description font="-exact-footnote" color="-exact-secondary-label" line-clamp=2 testId=`${prefix}card-description-${p.id}`
           row column-gap=16 flex-wrap="wrap" margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
             button appearance="none" press=reply(p) disabled=(not signedIn) aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
               image "symbol:reply" aria-hidden=true

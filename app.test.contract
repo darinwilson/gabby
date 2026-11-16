@@ -721,3 +721,45 @@ test "a reply to a reply shows in the thread it was written from"
   expect text "post-title" == "Post"
   expect text "thread-text-new" == "Agreed"
   expect text "thread-replies-c1" == "11"
+
+test "pictures show in the timeline, each with its description"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree has "media-p3"
+  expect tree has "image-p3-g1"
+  expect tree has "image-p3-g2"
+  expect tree missing "card-p3"
+  expect tree missing "media-2"
+
+test "a video and a sound play inline"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree has "video-v1-v1"
+  expect tree has "audio-a1-a1"
+
+test "a shared link shows its preview"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect text "card-title-k1" == "A field guide to garden birds"
+  expect text "card-provider-k1" == "Example Field Guides"
+  expect text "card-description-k1" == "Twelve birds you can see from your window, and how to tell them apart."
+  expect tree missing "card-2"
+
+test "sensitive media stays hidden until it's asked for"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree has "reveal-s1"
+  expect tree missing "image-s1-s1"
+  tap "reveal-s1"
+  clock settle
+  expect tree has "image-s1-s1"
+  expect text "reveal-s1" == "Hide sensitive media"
+
+test "a post's view shows its media too"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "open-p3"
+  clock settle
+  clock data
+  expect text "post-title" == "Post"
+  expect tree has "focus-image-p3-g1"

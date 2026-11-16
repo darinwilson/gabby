@@ -238,7 +238,50 @@ type Status = {
   account: { id: string; username: string; acct: string; display_name: string; avatar: string };
   mentions?: { id: string; acct: string }[];
   reblog: Status | null;
+  sensitive?: boolean;
+  media_attachments?: MediaJson[];
+  card?: { url: string; title: string; description: string; image: string | null; provider_name: string } | null;
 };
+
+type MediaJson = {
+  id: string;
+  type: string;
+  url: string | null;
+  preview_url: string | null;
+  remote_url?: string | null;
+  description: string | null;
+  meta?: { original?: { width?: number; height?: number; aspect?: number } } | null;
+};
+
+const MEDIA_KINDS = ['image', 'video', 'gifv', 'audio'];
+const web = (url: string | null | undefined) => (url && /^https?:\/\//i.test(url) ? url : '');
+
+function toMedia(m: MediaJson): Post['media'][number] {
+  const original = m.meta?.original;
+  const ratio = original?.aspect ?? (original?.width && original?.height ? original.width / original.height : 0);
+  // An attachment the server couldn't fetch from another server is "unknown"; its link is the original.
+  const kind = MEDIA_KINDS.includes(m.type) && web(m.url) ? m.type : 'unknown';
+  return {
+    id: m.id,
+    kind,
+    url: kind === 'unknown' ? web(m.remote_url) || web(m.url) : web(m.url),
+    preview: web(m.preview_url),
+    description: m.description ?? '',
+    ratio,
+  };
+}
+
+function toCard(card: Status['card']): Post['card'] {
+  const url = web(card?.url);
+  if (!card || !url) return { url: '', title: '', description: '', image: '', provider: '' };
+  return {
+    url,
+    title: card.title || url,
+    description: card.description,
+    image: web(card.image),
+    provider: card.provider_name || new URL(url).hostname,
+  };
+}
 
 type AccountJson = Status['account'] & {
   header: string;
@@ -275,6 +318,9 @@ function toPost(status: Status, host: string): Post {
     ...counts(shown),
     accountId: account.id,
     pinned: false,
+    media: (shown.media_attachments ?? []).map(toMedia).filter((m) => m.url !== ''),
+    sensitive: shown.sensitive ?? false,
+    card: toCard(shown.card),
   };
 }
 
