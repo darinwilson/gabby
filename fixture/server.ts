@@ -41,17 +41,21 @@ const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
 // Posts a test can open, each with the post it replies to.
 const LIN = (host: string) => ({ id: 'lin', username: 'lin', acct: `lin@${host}`, display_name: 'Lin', avatar: '' });
 
-const POSTS: Record<string, { text: (host: string) => string; parent?: string; by?: (host: string) => ReturnType<typeof LIN> }> = {
+const POSTS: Record<string, { text: (host: string) => string; parent?: string; by?: (host: string) => ReturnType<typeof LIN>; mentions?: (host: string) => { id: string; acct: string }[]; visibility?: string }> = {
   '1': { text: () => 'An older public post' },
   '2': { text: (host) => `A public post <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a>` },
   'c1': { text: () => 'A reply', parent: '2' },
   'c2': { text: () => 'A reply to the reply', parent: 'c1' },
-  'h1': { text: () => 'A post from someone you follow' },
+  'h1': { text: () => 'A post from someone you follow', mentions: (host) => [{ id: 'grace', acct: `grace@${host}` }, { id: 'me', acct: 'darin' }] },
   'b1': { text: () => 'A post someone you follow boosted' },
-  'l1': { text: () => 'A post from a locked account', by: LIN },
+  'l1': { text: () => 'A post from a locked account', by: LIN, visibility: 'private' },
   'm1': { text: () => 'A post of your own', by: () => ME },
 };
-const post = (id: string, host: string) => status(id, host, POSTS[id].text(host), POSTS[id].by?.(host));
+const post = (id: string, host: string) => ({
+  ...status(id, host, POSTS[id].text(host), POSTS[id].by?.(host)),
+  visibility: POSTS[id].visibility ?? 'public',
+  mentions: POSTS[id].mentions?.(host) ?? [],
+});
 const ancestors = (id: string): string[] => {
   const parent = POSTS[id].parent;
   return parent ? [...ancestors(parent), parent] : [];
@@ -119,7 +123,15 @@ async function write(req: Request, host: string, route: string) {
     if (ids.some((id) => unattached.get(id)!.checks < 1 && unattached.get(id)!.type !== 'image')) return json({ error: 'Cannot attach files that have not finished processing. Try again in a moment!' }, 422);
     const media = ids.map((id) => MEDIA(id, host, unattached.get(id)!.type));
     for (const id of ids) unattached.delete(id);
-    return json({ ...status('new', host, text.replace(/\n/g, '<br>'), ME), visibility: body.visibility ?? 'public', media_attachments: media });
+    return json({
+      ...status('new', host, text.replace(/\n/g, '<br>'), ME),
+      visibility: body.visibility ?? 'public',
+      in_reply_to_id: body.in_reply_to_id ?? null,
+      replies_count: 0,
+      reblogs_count: 0,
+      favourites_count: 0,
+      media_attachments: media,
+    });
   }
   const match = route.match(/^(POST|DELETE) \/api\/v1\/statuses\/([^/]+)(?:\/(\w+))?$/);
   if (!match) return null;

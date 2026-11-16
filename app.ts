@@ -236,6 +236,7 @@ type Status = {
   favourited?: boolean;
   reblogged?: boolean;
   account: { id: string; username: string; acct: string; display_name: string; avatar: string };
+  mentions?: { id: string; acct: string }[];
   reblog: Status | null;
 };
 
@@ -440,10 +441,11 @@ async function setFollow(host: string, id: string, follow: boolean, store: Store
 type Attachment = Result<'draftMedia'>[number];
 type Picked = { path: string; name: string; type: string; size: number };
 
-// Files uploaded for the post being written on each server, sent with it.
+// Files uploaded for each post being written (a new post, or a reply to a post), sent with it.
 const drafts = new Map<string, Attachment[]>();
 // One Idempotency-Key per draft, so a post retried after a lost reply is made once.
 const postKeys = new Map<string, string>();
+const draftKey = (host: string, replyTo: string) => JSON.stringify([host, replyTo]);
 let uploads = 0;
 
 const utf8 = (text: string) => new TextEncoder().encode(text);
@@ -531,9 +533,10 @@ async function uploadOne(host: string, file: Picked, store: Store, storage: Stor
   return { id: media.id, kind: media.type, preview: media.type === 'image' || media.type === 'gifv' ? (media.preview_url ?? '') : '', name: file.name };
 }
 
-async function uploadMedia(host: string, files: Picked[], store: Store, storage: Storage): Promise<Result<'uploadMedia'>> {
+async function uploadMedia(host: string, replyTo: string, files: Picked[], store: Store, storage: Storage): Promise<Result<'uploadMedia'>> {
   const { media: max } = await limitsFor(host);
-  const kept = drafts.get(host) ?? [];
+  const key = draftKey(host, replyTo);
+  const kept = drafts.get(key) ?? [];
   const room = max - kept.length;
   const chosen = files.slice(0, room);
   const kinds = [...kept.map((a) => (a.kind === 'image' ? 'image/' : `${a.kind}/`)), ...chosen.map(typeOf)];
@@ -543,7 +546,7 @@ async function uploadMedia(host: string, files: Picked[], store: Store, storage:
   try {
     for (const file of chosen) {
       const added = await uploadOne(host, file, store, storage);
-      drafts.set(host, [...(drafts.get(host) ?? []), added]);
+      drafts.set(key, [...(drafts.get(key) ?? []), added]);
     }
   } catch (error) {
     const { reason, detail, signedOut } = error as { reason?: string; detail?: string; signedOut?: boolean };
@@ -568,30 +571,38 @@ async function forget(host: string, ids: string[], store: Store) {
   }
 }
 
-async function dropMedia(host: string, id: string, store: Store): Promise<Result<'dropMedia'>> {
-  drafts.set(host, (drafts.get(host) ?? []).filter((a) => a.id !== id));
+async function dropMedia(host: string, replyTo: string, id: string, store: Store): Promise<Result<'dropMedia'>> {
+  const key = draftKey(host, replyTo);
+  drafts.set(key, (drafts.get(key) ?? []).filter((a) => a.id !== id));
   await forget(host, [id], store);
   return { ok: true, error: '' };
 }
 
-async function discardDraft(host: string, store: Store): Promise<Result<'discardDraft'>> {
-  const ids = (drafts.get(host) ?? []).map((a) => a.id);
-  drafts.delete(host);
-  postKeys.delete(host);
+async function discardDraft(host: string, replyTo: string, store: Store): Promise<Result<'discardDraft'>> {
+  const key = draftKey(host, replyTo);
+  const ids = (drafts.get(key) ?? []).map((a) => a.id);
+  drafts.delete(key);
+  postKeys.delete(key);
   await forget(host, ids, store);
   return { ok: true, error: '' };
 }
 
-async function publish(host: string, text: string, visibility: string, store: Store): Promise<Result<'publish'>> {
-  const media = drafts.get(host) ?? [];
-  const key = postKeys.get(host) ?? crypto.randomUUID();
-  postKeys.set(host, key);
+async function publish(host: string, replyTo: string, text: string, visibility: string, store: Store): Promise<Result<'publish'>> {
+  const draft = draftKey(host, replyTo);
+  const media = drafts.get(draft) ?? [];
+  const key = postKeys.get(draft) ?? crypto.randomUUID();
+  postKeys.set(draft, key);
   let response: Response;
   try {
     response = await (await providerFor(host, store)).fetch(store, `${base(host)}/api/v1/statuses`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-      body: JSON.stringify({ status: text, visibility, media_ids: media.map((a) => a.id) }),
+      body: JSON.stringify({
+        status: text,
+        visibility,
+        media_ids: media.map((a) => a.id),
+        ...(replyTo ? { in_reply_to_id: replyTo } : {}),
+      }),
     });
   } catch (error) {
     return {
@@ -606,12 +617,69 @@ async function publish(host: string, text: string, visibility: string, store: St
     return { ok: false, error: body.error ? `Couldn't post: ${body.error}` : "Couldn't post." };
   }
   const status = (await response.json()) as Status;
-  drafts.delete(host);
-  postKeys.delete(host);
+  drafts.delete(draft);
+  postKeys.delete(draft);
+  const created = toPost(status, host);
   // Home timelines are read once, so the new post goes on top of the one kept.
   const home = feeds.get(JSON.stringify([host, true, '']));
-  if (home && home.posts.length > 0) home.posts = [toPost(status, host), ...home.posts];
+  if (home && home.posts.length > 0) home.posts = [created, ...home.posts];
+  if (replyTo) answered(host, replyTo, created);
   return { ok: true, error: '' };
+}
+
+// Counts a reply on the post it answers wherever that post is kept, and adds it to that post's thread.
+// Only a kept copy that changed is marked, so every other view still reads the server when opened.
+function answered(host: string, replyTo: string, reply: Post) {
+  const hit = (p: Post) => p.statusId === replyTo;
+  const take = (p: Post) => (hit(p) ? { ...p, replies: p.replies + 1 } : p);
+  for (const feed of feeds.values()) if (feed.host === host) feed.posts = feed.posts.map(take);
+  for (const [key, person] of people) {
+    if (person.host !== host || ![...person.pinned, ...person.posts].some(hit)) continue;
+    personActed.add(key);
+    people.set(key, { ...person, pinned: person.pinned.map(take), posts: person.posts.map(take) });
+  }
+  for (const [key, thread] of threads) {
+    const under = thread.replies.findIndex(hit);
+    if (thread.host !== host || !(hit(thread.post) || under >= 0 || thread.ancestors.some(hit))) continue;
+    acted.add(key);
+    const replies = thread.replies.map(take);
+    // Shown straight under the post it answers, as the newest of its replies.
+    if (hit(thread.post)) replies.push(reply);
+    else if (under >= 0) replies.splice(under + 1, 0, reply);
+    threads.set(key, { ...thread, ancestors: thread.ancestors.map(take), post: take(thread.post), replies });
+  }
+}
+
+// A reply mentions the post's author and everyone it mentions, except whoever is replying,
+// and keeps the post's visibility, as Mastodon's own app does.
+const VISIBILITY_ORDER = ['public', 'unlisted', 'private', 'direct'];
+
+async function replyDraft(host: string, id: string, store: Store): Promise<Result<'replyDraft'>> {
+  if (!(await signedIn(host, store))) throw failure('auth-required');
+  const provider = await providerFor(host, store);
+  const [response, mine] = await Promise.all([
+    provider.fetch(store, `${base(host)}/api/v1/statuses/${encodeURIComponent(id)}`),
+    provider.fetch(store, `${base(host)}/api/v1/accounts/verify_credentials`),
+  ]);
+  if (response.status === 401 || mine.status === 401) throw failure('auth-expired');
+  if (response.status === 404) throw failure('not-found');
+  if (!response.ok || !mine.ok) throw failure('http');
+  const status = (await response.json()) as Status;
+  const me = (await mine.json()) as { id: string; source?: { privacy?: string } };
+  const shown = status.reblog ?? status;
+  const people = [shown.account, ...(shown.mentions ?? [])].filter((a) => a.id !== me.id);
+  const mention = [...new Set(people.map((a) => a.acct))].map((acct) => `@${acct} `).join('');
+  // Mastodon's web client starts at the narrower of the post's visibility and the account's default.
+  const narrower = (a: string, b: string) => (VISIBILITY_ORDER.indexOf(a) > VISIBILITY_ORDER.indexOf(b) ? a : b);
+  return {
+    host,
+    id,
+    name: shown.account.display_name || shown.account.username,
+    text: markdown(shown.content, host),
+    mention,
+    visibility: narrower(shown.visibility, me.source?.privacy ?? 'public'),
+    widest: shown.visibility,
+  };
 }
 
 // Mastodon answers with the status as it now stands, which every timeline and thread showing it takes.
@@ -662,12 +730,13 @@ const sources: Sources = {
   loadThread: ([host, id], store) => loadThread(host, id, store),
   act: ([host, statusId, action], store) => act(host, statusId, action, store),
   loadPerson: ([host, id], store) => loadPerson(host, id, store),
-  draftMedia: ([host]) => [...(drafts.get(host) ?? [])],
-  uploadMedia: ([host, files], store, storage) => uploadMedia(host, files, store, storage),
-  dropMedia: ([host, id], store) => dropMedia(host, id, store),
-  discardDraft: ([host], store) => discardDraft(host, store),
+  draftMedia: ([host, replyTo]) => [...(drafts.get(draftKey(host, replyTo)) ?? [])],
+  uploadMedia: ([host, replyTo, files], store, storage) => uploadMedia(host, replyTo, files, store, storage),
+  dropMedia: ([host, replyTo, id], store) => dropMedia(host, replyTo, id, store),
+  discardDraft: ([host, replyTo], store) => discardDraft(host, replyTo, store),
   composeLimits: ([host, text]) => composeLimits(host, text),
-  publish: ([host, text, visibility], store) => publish(host, text, visibility, store),
+  publish: ([host, replyTo, text, visibility], store) => publish(host, replyTo, text, visibility, store),
+  replyDraft: ([host, id], store) => replyDraft(host, id, store),
   morePosts: ([host, id], store) => morePosts(host, id, store),
   setFollow: ([host, id, follow], store) => setFollow(host, id, follow, store),
   nextPage: async ([host, home, tag], store) => {
