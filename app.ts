@@ -1,5 +1,5 @@
 import { oauth, type OAuthProvider, type OAuthSession } from '@exact/oauth';
-import type { Answer, Result, Sources, Store } from './app.contract.d.ts';
+import type { Answer, Result, Sources, Storage, Store } from './app.contract.d.ts';
 
 // The live origin is a placeholder: live, each server is reached at its own
 // origin. Tests select the fixture with `--backend`, which serves every server
@@ -28,6 +28,7 @@ export const grants = {
     'secret.keep mastodon-social.session',
     'secret.keep mastodon-art.client',
     'secret.keep mastodon-art.session',
+    'fs.read app:/tmp/picked',
   ],
   'http://127.0.0.1:4790': [
     'net.fetch http://127.0.0.1:4790',
@@ -39,6 +40,7 @@ export const grants = {
     'secret.keep mastodon-social.session',
     'secret.keep mastodon-art.client',
     'secret.keep mastodon-art.session',
+    'fs.read app:/tmp/picked',
   ],
 };
 
@@ -435,6 +437,79 @@ async function setFollow(host: string, id: string, follow: boolean, store: Store
   return { ok: true };
 }
 
+type Attachment = Result<'draftMedia'>[number];
+type Picked = { path: string; name: string; type: string };
+
+// Files uploaded for the post being written on each server, sent with it.
+const drafts = new Map<string, Attachment[]>();
+const MAX_MEDIA = 4;
+let uploads = 0;
+
+const utf8 = (text: string) => new TextEncoder().encode(text);
+
+// Mastodon takes media only as multipart/form-data (POST /api/v2/media).
+async function uploadOne(host: string, file: Picked, store: Store, storage: Storage): Promise<Attachment> {
+  const bytes = new Uint8Array(await storage.fs.readFile(file.path));
+  const boundary = `----GabbyFormBoundary${++uploads}x9Qf3LzT7hKp2Wd`;
+  const name = file.name.replace(/["\r\n\\]/g, '_');
+  const head = utf8(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`);
+  const tail = utf8(`\r\n--${boundary}--\r\n`);
+  const body = new Uint8Array(head.length + bytes.length + tail.length);
+  body.set(head);
+  body.set(bytes, head.length);
+  body.set(tail, head.length + bytes.length);
+  const response = await (await providerFor(host, store)).fetch(store, `${base(host)}/api/v2/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    body,
+  });
+  if (response.status === 413) throw failure('too-large');
+  if (!response.ok) throw failure((await response.json().catch(() => ({}))).error ?? 'http');
+  const media = (await response.json()) as { id: string; type: string; preview_url: string | null };
+  return { id: media.id, kind: media.type, preview: media.preview_url ?? '', name: file.name };
+}
+
+async function uploadMedia(host: string, files: Picked[], store: Store, storage: Storage): Promise<Result<'uploadMedia'>> {
+  const list = drafts.get(host) ?? [];
+  const room = MAX_MEDIA - list.length;
+  try {
+    for (const file of files.slice(0, room)) {
+      list.push(await uploadOne(host, file, store, storage));
+      drafts.set(host, list);
+    }
+  } catch (error) {
+    const reason = (error as { reason?: string }).reason;
+    return { ok: false, error: reason === 'too-large' ? 'That file is too large for this server.' : "Couldn't add the file." };
+  }
+  return files.length > room
+    ? { ok: false, error: `A post can have at most ${MAX_MEDIA} files.` }
+    : { ok: true, error: '' };
+}
+
+function dropMedia(host: string, id: string): Result<'dropMedia'> {
+  drafts.set(host, (drafts.get(host) ?? []).filter((a) => a.id !== id));
+  return { ok: true, error: '' };
+}
+
+async function publish(host: string, text: string, visibility: string, store: Store): Promise<Result<'publish'>> {
+  const media = drafts.get(host) ?? [];
+  const response = await (await providerFor(host, store)).fetch(store, `${base(host)}/api/v1/statuses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: text, visibility, media_ids: media.map((a) => a.id) }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: body.error ? `Couldn't post: ${body.error}` : "Couldn't post." };
+  }
+  const status = (await response.json()) as Status;
+  drafts.delete(host);
+  // Home timelines are read once, so the new post goes on top of the one kept.
+  const home = feeds.get(JSON.stringify([host, true, '']));
+  if (home && home.posts.length > 0) home.posts = [toPost(status, host), ...home.posts];
+  return { ok: true, error: '' };
+}
+
 // Mastodon answers with the status as it now stands, which every timeline and thread showing it takes.
 async function act(host: string, statusId: string, action: string, store: Store): Promise<Result<'act'>> {
   const url = `${base(host)}/api/v1/statuses/${encodeURIComponent(statusId)}/${action}`;
@@ -483,6 +558,10 @@ const sources: Sources = {
   loadThread: ([host, id], store) => loadThread(host, id, store),
   act: ([host, statusId, action], store) => act(host, statusId, action, store),
   loadPerson: ([host, id], store) => loadPerson(host, id, store),
+  draftMedia: ([host]) => [...(drafts.get(host) ?? [])],
+  uploadMedia: ([host, files], store, storage) => uploadMedia(host, files, store, storage),
+  dropMedia: ([host, id]) => dropMedia(host, id),
+  publish: ([host, text, visibility], store) => publish(host, text, visibility, store),
   morePosts: ([host, id], store) => morePosts(host, id, store),
   setFollow: ([host, id, follow], store) => setFollow(host, id, follow, store),
   nextPage: async ([host, home, tag], store) => {

@@ -86,6 +86,14 @@ const PROFILES: Record<string, (host: string) => object> = {
 };
 const PROFILE_POSTS: Record<string, string[]> = { ada: ['2', '1'], lin: [], me: ['m1'] };
 
+const MEDIA = (id: string, host: string) => ({
+  id,
+  type: 'image',
+  url: `http://127.0.0.1:${port}/${host}/media/${id}.png`,
+  preview_url: `http://127.0.0.1:${port}/${host}/media/${id}.png`,
+  description: null,
+});
+
 const authorized = (req: Request) => req.headers.get('Authorization') === `Bearer ${TOKEN}`;
 const unauthorized = () => json({ error: 'The access token is invalid' }, 401);
 
@@ -95,8 +103,9 @@ async function write(req: Request, host: string, route: string) {
     const body = req.headers.get('Content-Type')?.includes('json')
       ? await req.json()
       : Object.fromEntries(await req.formData());
-    if (!body.status) return json({ error: "Validation failed: Text can't be blank" }, 422);
-    return json(status('new', host, body.status, ME));
+    if (!body.status && !(body.media_ids ?? []).length) return json({ error: "Validation failed: Text can't be blank" }, 422);
+    const media = [body['media_ids[]'] ?? body.media_ids ?? []].flat().map((id: string) => MEDIA(id, host));
+    return json({ ...status('new', host, String(body.status ?? '').replace(/\n/g, '<br>'), ME), visibility: body.visibility ?? 'public', media_attachments: media });
   }
   const match = route.match(/^(POST|DELETE) \/api\/v1\/statuses\/([^/]+)(?:\/(\w+))?$/);
   if (!match) return null;
@@ -148,6 +157,13 @@ Bun.serve({
       if (url.searchParams.get('pinned') === 'true') return json(id === 'ada' ? [post('1', host)] : []);
       return json(firstPage ? PROFILE_POSTS[id].map((p) => post(p, host)) : []);
     }
+    if (route === 'POST /api/v2/media') {
+      if (!authorized(req)) return unauthorized();
+      const file = (await req.formData()).get('file');
+      if (!(file instanceof Blob) || file.size === 0) return json({ error: 'Validation failed: File is missing' }, 422);
+      return json(MEDIA('m1', host));
+    }
+    if (route.startsWith('GET /media/')) return new Response(Bun.file(new URL('../assets/icon.png', import.meta.url)), { headers: CORS });
     const read = route.match(/^GET \/api\/v1\/statuses\/([^/]+)(\/context)?$/);
     if (read) {
       const [, id, context] = read;
