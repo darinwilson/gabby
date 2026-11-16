@@ -649,3 +649,75 @@ test "signed out, a post can't be replied to"
   at "/timeline/fosstodon.org"
   clock data
   expect disabled "reply-2"
+
+test "a reply to a boost mentions who wrote the post, and a reply to your own post mentions no one"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "reply-h2"
+  clock settle
+  clock data
+  expect text "reply-to" == "Replying to Ada"
+  expect text "compose-left" == "495"
+  tap "reply-back"
+  clock settle
+  clock data
+  tap "reply-m1"
+  clock settle
+  clock data
+  expect text "reply-to" == "Replying to Darin"
+  expect text "compose-left" == "500"
+  expect disabled "compose-post"
+
+test "a reply to a followers-only post can't be made public"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "reply-l1"
+  clock settle
+  clock data
+  expect text "compose-visibility" == "private"
+  expect disabled "compose-visibility-public"
+  expect disabled "compose-visibility-unlisted"
+  expect enabled "compose-visibility-private"
+
+test "a reply to a reply shows in the thread it was written from"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "avatar-h1"
+  clock settle
+  clock data
+  tap "person-open-2"
+  clock settle
+  clock data
+  tap "thread-reply-c1"
+  clock settle
+  clock data
+  type "compose-text" "Agreed"
+  tap "compose-post"
+  clock data
+  clock data
+  clock settle
+  clock data
+  expect text "post-title" == "Post"
+  expect text "thread-text-new" == "Agreed"
+  expect text "thread-replies-c1" == "11"

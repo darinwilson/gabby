@@ -236,7 +236,7 @@ type Status = {
   favourited?: boolean;
   reblogged?: boolean;
   account: { id: string; username: string; acct: string; display_name: string; avatar: string };
-  mentions?: { acct: string }[];
+  mentions?: { id: string; acct: string }[];
   reblog: Status | null;
 };
 
@@ -623,46 +623,62 @@ async function publish(host: string, replyTo: string, text: string, visibility: 
   // Home timelines are read once, so the new post goes on top of the one kept.
   const home = feeds.get(JSON.stringify([host, true, '']));
   if (home && home.posts.length > 0) home.posts = [created, ...home.posts];
-  if (replyTo) answered(replyTo, created);
+  if (replyTo) answered(host, replyTo, created);
   return { ok: true, error: '' };
 }
 
 // Counts a reply on the post it answers wherever that post is kept, and adds it to that post's thread.
-function answered(replyTo: string, reply: Post) {
-  const take = (p: Post) => (p.statusId === replyTo ? { ...p, replies: p.replies + 1 } : p);
-  for (const feed of feeds.values()) feed.posts = feed.posts.map(take);
+// Only a kept copy that changed is marked, so every other view still reads the server when opened.
+function answered(host: string, replyTo: string, reply: Post) {
+  const hit = (p: Post) => p.statusId === replyTo;
+  const take = (p: Post) => (hit(p) ? { ...p, replies: p.replies + 1 } : p);
+  for (const feed of feeds.values()) if (feed.host === host) feed.posts = feed.posts.map(take);
   for (const [key, person] of people) {
+    if (person.host !== host || ![...person.pinned, ...person.posts].some(hit)) continue;
     personActed.add(key);
     people.set(key, { ...person, pinned: person.pinned.map(take), posts: person.posts.map(take) });
   }
   for (const [key, thread] of threads) {
+    const under = thread.replies.findIndex(hit);
+    if (thread.host !== host || !(hit(thread.post) || under >= 0 || thread.ancestors.some(hit))) continue;
     acted.add(key);
-    const post = take(thread.post);
     const replies = thread.replies.map(take);
-    threads.set(key, { ...thread, ancestors: thread.ancestors.map(take), post, replies: post.statusId === replyTo ? [...replies, reply] : replies });
+    // Shown straight under the post it answers, as the newest of its replies.
+    if (hit(thread.post)) replies.push(reply);
+    else if (under >= 0) replies.splice(under + 1, 0, reply);
+    threads.set(key, { ...thread, ancestors: thread.ancestors.map(take), post: take(thread.post), replies });
   }
 }
 
 // A reply mentions the post's author and everyone it mentions, except whoever is replying,
 // and keeps the post's visibility, as Mastodon's own app does.
+const VISIBILITY_ORDER = ['public', 'unlisted', 'private', 'direct'];
+
 async function replyDraft(host: string, id: string, store: Store): Promise<Result<'replyDraft'>> {
+  if (!(await signedIn(host, store))) throw failure('auth-required');
   const provider = await providerFor(host, store);
-  const response = await provider.fetch(store, `${base(host)}/api/v1/statuses/${encodeURIComponent(id)}`);
-  if (response.status === 401) throw failure('auth-expired');
+  const [response, mine] = await Promise.all([
+    provider.fetch(store, `${base(host)}/api/v1/statuses/${encodeURIComponent(id)}`),
+    provider.fetch(store, `${base(host)}/api/v1/accounts/verify_credentials`),
+  ]);
+  if (response.status === 401 || mine.status === 401) throw failure('auth-expired');
   if (response.status === 404) throw failure('not-found');
-  if (!response.ok) throw failure('http');
+  if (!response.ok || !mine.ok) throw failure('http');
   const status = (await response.json()) as Status;
+  const me = (await mine.json()) as { id: string; source?: { privacy?: string } };
   const shown = status.reblog ?? status;
-  const me = (await provider.json(store, `${base(host)}/api/v1/accounts/verify_credentials`)) as { acct: string };
-  const accts = [shown.account.acct, ...(shown.mentions ?? []).map((m) => m.acct)];
-  const mention = [...new Set(accts)].filter((acct) => acct !== me.acct).map((acct) => `@${acct} `).join('');
+  const people = [shown.account, ...(shown.mentions ?? [])].filter((a) => a.id !== me.id);
+  const mention = [...new Set(people.map((a) => a.acct))].map((acct) => `@${acct} `).join('');
+  // Mastodon's web client starts at the narrower of the post's visibility and the account's default.
+  const narrower = (a: string, b: string) => (VISIBILITY_ORDER.indexOf(a) > VISIBILITY_ORDER.indexOf(b) ? a : b);
   return {
     host,
     id,
     name: shown.account.display_name || shown.account.username,
     text: markdown(shown.content, host),
     mention,
-    visibility: shown.visibility,
+    visibility: narrower(shown.visibility, me.source?.privacy ?? 'public'),
+    widest: shown.visibility,
   };
 }
 

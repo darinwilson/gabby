@@ -99,6 +99,7 @@ shape ReplyDraft
   text: string
   mention: string
   visibility: string
+  widest: string
 
 shape Outcome
   ok: bool
@@ -226,6 +227,9 @@ component Gabby
       nav = push(nav, path("reply", host, p.statusId))
   action showReply(h: string, id: string)
     nav = push(nav, path("reply", h, id))
+  action cancelReply(h: string, id: string)
+    send discarded = discardDraft(h, id)
+    nav = back(nav)
   action replied
     nav = back(nav)
     wrote = wrote + 1
@@ -300,7 +304,7 @@ component Gabby
                           text profile.name overflow-wrap="break-word" font-weight=600 testId="profile-name"
                           text profile.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label" testId="profile-handle"
                     if timeline.signedIn and timeline.host == host
-                      Composer(host=host, prefix="side-", replyTo="", start="", startVisibility="public", done=postChanged)
+                      Composer(host=host, prefix="side-", replyTo="", start="", startVisibility="public", widest="public", done=postChanged)
                     if instance.thumbnail != ""
                       image instance.thumbnail width="100%" aspect-ratio="1.91" object-fit="cover" border-radius=12 alt=""
                     text instance.title font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="instance-title"
@@ -339,11 +343,11 @@ component Gabby
                 text "Cancel"
               text "New Post" role="heading" aria-level=2 testId="compose-title"
             column flex=1 min-height=0 overflow-y="auto" padding=16 width="100%" max-width="37.5rem" margin-left="auto" margin-right="auto" box-sizing="border-box"
-              Composer(host=e.params.host, prefix="", replyTo="", start="", startVisibility="public", done=composed)
+              Composer(host=e.params.host, prefix="", replyTo="", start="", startVisibility="public", widest="public", done=composed)
         if e.name == "account"
           PersonView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged)
         if e.name == "reply"
-          ReplyView(route=`${e.id}`, host=e.params.host, id=e.params.id, back=back, done=replied)
+          ReplyView(route=`${e.id}`, host=e.params.host, id=e.params.id, cancel=cancelReply, done=replied)
 
 // A post and the posts around it: what it replies to above, its replies below.
 component PostView
@@ -520,6 +524,8 @@ component Composer
     replyTo: string
     start: string
     startVisibility: string
+    // The widest visibility allowed: a reply is no wider than the post it answers.
+    widest: string
     done: action
   // The text and visibility read the start props until the person changes them.
   state text = ""
@@ -537,6 +543,7 @@ component Composer
   derive left = counted.text == body ? counted.left : 500 - body.length
   derive maxMedia = counted.media > 0 ? counted.media : 4
   derive busy = pending(uploaded) or pending(posted)
+  derive widestRank = widest == "direct" ? 3 : widest == "private" ? 2 : widest == "unlisted" ? 1 : 0
   derive canPost = (body.trim() != "" or attached.length > 0) and left >= 0 and not busy
   derive postError = match posted { case some(o) => o.error, case none => "" }
   derive postOk = match posted { case some(o) => o.ok, case none => false }
@@ -590,9 +597,9 @@ component Composer
         button press=attach disabled=(attached.length >= maxMedia or busy) aria-label="Add photos, video or audio" buttonStyle="bordered" testId=`${prefix}compose-attach`
           image "symbol:photo"
         select value=visibility change=setVisibility aria-label="Who can see this" flex=1 min-width=0 testId=`${prefix}compose-visibility`
-          option "Public" value="public"
-          option "Quiet public" value="unlisted"
-          option "Followers only" value="private"
+          option "Public" value="public" disabled=(widestRank > 0) testId=`${prefix}compose-visibility-public`
+          option "Quiet public" value="unlisted" disabled=(widestRank > 1) testId=`${prefix}compose-visibility-unlisted`
+          option "Followers only" value="private" disabled=(widestRank > 2) testId=`${prefix}compose-visibility-private`
           option "Mentioned people only" value="direct"
       row gap=12 align-items="center" justify-content="flex-end"
         if busy
@@ -607,22 +614,18 @@ component ReplyView
     route: string
     host: string
     id: string
-    back: action
+    cancel: action
     done: action
   resource draft = replyDraft(host, id) as shape ReplyDraft else empty() transient
   derive ready = draft.host == host and draft.id == id
-  derive error = match failure(draft) { case some(f) => (f.code == "not-found" ? "This post isn't available." : f.code == "auth-expired" ? "Log in again to reply." : "Couldn't load the post."), case none => "" }
-  mutation discarded as shape Outcome
+  derive error = match failure(draft) { case some(f) => (f.code == "not-found" ? "This post isn't available." : f.code == "auth-required" ? "Log in to reply." : f.code == "auth-expired" ? "Log in again to reply." : "Couldn't load the post."), case none => "" }
   action retry
     refresh draft
-  action cancel
-    send discarded = discardDraft(host, id)
-    back()
 
   view
     column navigationKey=route navigationScroll="reply" position="absolute" inset=0 display="flex" flex-direction="column"
       header
-        button id="back" press=cancel testId="reply-back"
+        button id="back" press=cancel(host, id) testId="reply-back"
           text "Cancel"
         text "Reply" role="heading" aria-level=2 testId="reply-title"
       column flex=1 min-height=0 overflow-y="auto" padding=16 gap=12 width="100%" max-width="37.5rem" margin-left="auto" margin-right="auto" box-sizing="border-box"
@@ -638,7 +641,7 @@ component ReplyView
           column gap=4 padding-left=12 border-style="solid" border-color="-exact-separator" border-width="0 0 0 3px" testId="reply-target"
             text `Replying to ${draft.name}` font="-exact-footnote" color="-exact-secondary-label" overflow-wrap="break-word" testId="reply-to"
             text draft.text markup="markdown" overflow-wrap="break-word" color="-exact-secondary-label" line-clamp=4 testId="reply-quote"
-          Composer(host=host, prefix="", replyTo=id, start=draft.mention, startVisibility=draft.visibility, done=done)
+          Composer(host=host, prefix="", replyTo=id, start=draft.mention, startVisibility=draft.visibility, widest=draft.widest, done=done)
 
 // One post in a list. Tapping it opens the post; its buttons and hashtags do their own thing.
 component PostRow

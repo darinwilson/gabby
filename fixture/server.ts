@@ -41,12 +41,12 @@ const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
 // Posts a test can open, each with the post it replies to.
 const LIN = (host: string) => ({ id: 'lin', username: 'lin', acct: `lin@${host}`, display_name: 'Lin', avatar: '' });
 
-const POSTS: Record<string, { text: (host: string) => string; parent?: string; by?: (host: string) => ReturnType<typeof LIN>; mentions?: (host: string) => { acct: string }[]; visibility?: string }> = {
+const POSTS: Record<string, { text: (host: string) => string; parent?: string; by?: (host: string) => ReturnType<typeof LIN>; mentions?: (host: string) => { id: string; acct: string }[]; visibility?: string }> = {
   '1': { text: () => 'An older public post' },
   '2': { text: (host) => `A public post <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a>` },
   'c1': { text: () => 'A reply', parent: '2' },
   'c2': { text: () => 'A reply to the reply', parent: 'c1' },
-  'h1': { text: () => 'A post from someone you follow', mentions: (host) => [{ acct: `grace@${host}` }, { acct: 'darin' }] },
+  'h1': { text: () => 'A post from someone you follow', mentions: (host) => [{ id: 'grace', acct: `grace@${host}` }, { id: 'me', acct: 'darin' }] },
   'b1': { text: () => 'A post someone you follow boosted' },
   'l1': { text: () => 'A post from a locked account', by: LIN, visibility: 'private' },
   'm1': { text: () => 'A post of your own', by: () => ME },
