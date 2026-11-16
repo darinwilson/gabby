@@ -41,7 +41,29 @@ const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
 // Posts a test can open, each with the post it replies to.
 const LIN = (host: string) => ({ id: 'lin', username: 'lin', acct: `lin@${host}`, display_name: 'Lin', avatar: '' });
 
-const POSTS: Record<string, { text: (host: string) => string; parent?: string; by?: (host: string) => ReturnType<typeof LIN>; mentions?: (host: string) => { id: string; acct: string }[]; visibility?: string }> = {
+// A file in a post, served from fixture/media by its extension.
+const FILE = (host: string, id: string, type: string, ext: string, description: string | null = null, width = 640, height = 400) => ({
+  id,
+  type,
+  url: `http://127.0.0.1:${port}/${host}/media/${id}.${ext}`,
+  preview_url: `http://127.0.0.1:${port}/${host}/media/${id}.jpg`,
+  remote_url: null,
+  description,
+  meta: { original: { width, height, aspect: width / height } },
+});
+
+type Spec = {
+  text: (host: string) => string;
+  parent?: string;
+  by?: (host: string) => ReturnType<typeof LIN>;
+  mentions?: (host: string) => { id: string; acct: string }[];
+  visibility?: string;
+  media?: (host: string) => object[];
+  sensitive?: boolean;
+  card?: (host: string) => object;
+};
+
+const POSTS: Record<string, Spec> = {
   '1': { text: () => 'An older public post' },
   '2': { text: (host) => `A public post <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a>` },
   'c1': { text: () => 'A reply', parent: '2' },
@@ -50,11 +72,49 @@ const POSTS: Record<string, { text: (host: string) => string; parent?: string; b
   'b1': { text: () => 'A post someone you follow boosted' },
   'l1': { text: () => 'A post from a locked account', by: LIN, visibility: 'private' },
   'm1': { text: () => 'A post of your own', by: () => ME },
+  'p3': {
+    text: () => 'Two pictures',
+    media: (host) => [FILE(host, 'g1', 'image', 'jpg', 'A test pattern in bright colours'), FILE(host, 'g2', 'image', 'jpg')],
+    card: () => ({ url: 'https://example.com/pictures', title: 'Pictures', description: '', image: null, provider_name: 'Example' }),
+  },
+  'f1': { text: () => 'A GIF', media: (host) => [FILE(host, 'f1', 'gifv', 'mp4', null, 320, 180)] },
+  // A remote file the server didn't fetch, and an upload still processing.
+  'u1': {
+    text: () => 'A file from another server',
+    media: (host) => [
+      { ...FILE(host, 'u1', 'unknown', 'jpg'), url: null, preview_url: null, remote_url: 'https://elsewhere.example/files/u1.tiff', meta: null },
+      { ...FILE(host, 'u2', 'image', 'jpg'), url: null },
+    ],
+  },
+  // Cards as other fediverse servers send them: null fields, and a URL that doesn't parse.
+  'x1': { text: () => 'A bare link', card: () => ({ url: 'https://example.com/bare', title: null, description: null, image: null, provider_name: '' }) },
+  'x2': { text: () => 'A broken link', card: () => ({ url: 'https://', title: 'Broken', description: '', image: null, provider_name: '' }) },
+  'v1': { text: () => 'A video', media: (host) => [FILE(host, 'v1', 'video', 'mp4', 'A test pattern that moves', 320, 180)] },
+  'a1': { text: () => 'A sound', media: (host) => [{ ...FILE(host, 'a1', 'audio', 'm4a', 'A 440 Hz tone'), meta: null }] },
+  'k1': {
+    text: () => 'Reading <a href="https://example.com/birds" rel="nofollow noopener" target="_blank"><span class="invisible">https://</span><span class="">example.com/birds</span></a>',
+    card: (host) => ({
+      url: 'https://example.com/birds',
+      title: 'A field guide to garden birds',
+      description: 'Twelve birds you can see from your window, and how to tell them apart.',
+      image: `http://127.0.0.1:${port}/${host}/media/card.jpg`,
+      provider_name: 'Example Field Guides',
+    }),
+  },
+  's1': { text: () => 'A picture marked sensitive', sensitive: true, media: (host) => [FILE(host, 's1', 'image', 'jpg', 'A test pattern')] },
+  's2': {
+    text: () => 'A sensitive link',
+    sensitive: true,
+    card: (host) => ({ url: 'https://example.com/s2', title: 'Sensitive', description: '', image: `http://127.0.0.1:${port}/${host}/media/card.jpg`, provider_name: 'Example' }),
+  },
 };
 const post = (id: string, host: string) => ({
   ...status(id, host, POSTS[id].text(host), POSTS[id].by?.(host)),
   visibility: POSTS[id].visibility ?? 'public',
   mentions: POSTS[id].mentions?.(host) ?? [],
+  media_attachments: POSTS[id].media?.(host) ?? [],
+  sensitive: POSTS[id].sensitive ?? false,
+  card: POSTS[id].card?.(host) ?? null,
 });
 const ancestors = (id: string): string[] => {
   const parent = POSTS[id].parent;
@@ -207,7 +267,11 @@ Bun.serve({
       if (kept.checks++ < 1) return json({ ...MEDIA(media[2], host, kept.type), url: null }, 206);
       return json(MEDIA(media[2], host, kept.type));
     }
-    if (route.startsWith('GET /media/')) return new Response(Bun.file(new URL('../assets/icon.png', import.meta.url)), { headers: CORS });
+    if (route.startsWith('GET /media/')) {
+      const ext = route.match(/\.(jpg|mp4|m4a)$/)?.[1];
+      const file = ext ? `media/sample.${ext}` : '../assets/icon.png';
+      return new Response(Bun.file(new URL(file, import.meta.url)), { headers: CORS });
+    }
     const read = route.match(/^GET \/api\/v1\/statuses\/([^/]+)(\/context)?$/);
     if (read) {
       const [, id, context] = read;
@@ -230,6 +294,17 @@ Bun.serve({
         return json(firstPage ? [
           post('2', host),
           post('1', host),
+          post('p3', host),
+          post('v1', host),
+          post('a1', host),
+          post('k1', host),
+          post('s1', host),
+          post('f1', host),
+          post('u1', host),
+          post('x1', host),
+          post('x2', host),
+          post('s2', host),
+          boost('bp3', host, post('p3', host)),
         ] : []);
       case 'GET /api/v1/timelines/tag/birds':
         return json(firstPage ? [status('t1', host, 'A post about birds')] : []);
