@@ -527,18 +527,19 @@ component Composer
         text uploadError color="-exact-system-red" testId=`${prefix}compose-upload-error`
       if postError != ""
         text postError color="-exact-system-red" testId=`${prefix}compose-error`
-      row gap=8 align-items="center" flex-wrap="wrap"
+      row gap=8 align-items="center"
         input type="file" id=`${prefix}compose-file` multiple=true change=picked display="none" aria-hidden=true testId=`${prefix}compose-file`
         button press=attach disabled=(attached.length >= 4 or busy) aria-label="Add photos, video or audio" buttonStyle="bordered" testId=`${prefix}compose-attach`
           image "symbol:photo"
-        select value=visibility change=setVisibility aria-label="Who can see this" testId=`${prefix}compose-visibility`
+        select value=visibility change=setVisibility aria-label="Who can see this" flex=1 min-width=0 testId=`${prefix}compose-visibility`
           option "Public" value="public"
           option "Quiet public" value="unlisted"
           option "Followers only" value="private"
           option "Mentioned people only" value="direct"
+      row gap=12 align-items="center" justify-content="flex-end"
         if busy
           progress aria-label=(pending(uploaded) ? "Uploading" : "Posting") testId=`${prefix}compose-busy`
-        text `${left}` margin-left="auto" font-variant-numeric="tabular-nums" color=(left < 0 ? "-exact-system-red" : "-exact-secondary-label") aria-label=`${left} ${left == 1 ? "character" : "characters"} left` testId=`${prefix}compose-left`
+        text `${left}` font-variant-numeric="tabular-nums" color=(left < 0 ? "-exact-system-red" : "-exact-secondary-label") aria-label=`${left} ${left == 1 ? "character" : "characters"} left` testId=`${prefix}compose-left`
         button press=submit disabled=(not canPost) buttonStyle="filled" testId=`${prefix}compose-post`
           text "Post"
 
