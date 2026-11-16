@@ -1,4 +1,4 @@
-import { oauth, type OAuthProvider } from '@exact/oauth';
+import { oauth, type OAuthProvider, type OAuthSession } from '@exact/oauth';
 import type { Answer, Result, Sources, Store } from './app.contract.d.ts';
 
 // The live origin is a placeholder: live, each server is reached at its own
@@ -77,7 +77,12 @@ async function connect(input: string): Promise<Result<'connect'>> {
     : { ok: false, error: `${host} isn't a Mastodon server.`, host: '' };
 }
 
-type Client = { callback: string; id: string; secret: string };
+const SCOPES = ['read', 'write'];
+
+type Client = { callback: string; id: string; secret: string; scopes: string };
+
+// A session from before Gabby asked to write can't like or boost, so it signs in again.
+const active = (session: OAuthSession) => session.signedIn && SCOPES.every((s) => session.scopes.includes(s));
 
 const providers = new Map<string, OAuthProvider>();
 
@@ -89,16 +94,16 @@ async function providerFor(host: string, store: Store): Promise<OAuthProvider> {
   const name = `${SERVERS[host]}.client`;
   const callback = authCallback();
   let client = JSON.parse(store.get(name) ?? 'null') as Client | null;
-  if (client?.callback !== callback) {
+  if (client?.callback !== callback || client.scopes !== SCOPES.join(' ')) {
     const response = await fetch(`${base(host)}/api/v1/apps`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_name: 'Gabby', redirect_uris: callback, scopes: 'read' }),
+      body: JSON.stringify({ client_name: 'Gabby', redirect_uris: callback, scopes: SCOPES.join(' ') }),
       exactTimeout: TIMEOUT,
     });
     if (!response.ok) throw failure('register');
     const body = (await response.json()) as { client_id: string; client_secret: string };
-    client = { callback, id: body.client_id, secret: body.client_secret };
+    client = { callback, id: body.client_id, secret: body.client_secret, scopes: SCOPES.join(' ') };
     store.set(name, JSON.stringify(client));
   }
   const server = base(host);
@@ -107,7 +112,7 @@ async function providerFor(host: string, store: Store): Promise<OAuthProvider> {
     endpoints: { authorization: `${server}/oauth/authorize`, token: `${server}/oauth/token`, revocation: `${server}/oauth/revoke` },
     clientId: client.id,
     clientSecret: client.secret,
-    scopes: ['read'],
+    scopes: SCOPES,
     key: `${SERVERS[host]}.session`,
     apis: [new URL(server).origin],
   });
@@ -119,7 +124,7 @@ async function loadAccount(host: string, store: Store): Promise<Result<'loadAcco
   if (!(host in SERVERS)) return { host, supported: false, signedIn: false, error: '' };
   try {
     const session = await (await providerFor(host, store)).session(store);
-    return { host, supported: true, signedIn: session.signedIn, error: session.error };
+    return { host, supported: true, signedIn: active(session), error: session.error };
   } catch {
     return { host, supported: true, signedIn: false, error: `Couldn't prepare login for ${host}.` };
   }
@@ -135,7 +140,7 @@ async function loadProfile(host: string, store: Store): Promise<Result<'loadProf
 // The servers whose sessions the store still holds.
 async function loadRecent(store: Store): Promise<Result<'loadRecent'>> {
   const signedIn = await Promise.all(Object.keys(SERVERS).map(async (host) =>
-    store.get(`${SERVERS[host]}.client`) !== null && (await (await providerFor(host, store)).session(store)).signedIn));
+    store.get(`${SERVERS[host]}.client`) !== null && active(await (await providerFor(host, store)).session(store))));
   return Object.keys(SERVERS).filter((_, i) => signedIn[i]).map((host) => ({ host }));
 }
 
@@ -211,28 +216,51 @@ function markdown(html: string, host: string): string {
   return top().out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-// A hashtag opens in the app, on the server whose timeline shows it.
+// A hashtag gets the `tag:` scheme, which the view draws as a pill that opens it in the app,
+// on the server whose timeline shows it.
 function link(href: string, cls: string[], host: string): string {
   const name = cls.includes('hashtag') ? /\/tags\/([^/?#]+)/.exec(href)?.[1] : undefined;
-  return name ? `/tag/${host}/${name}` : href;
+  return name ? `tag:/tag/${host}/${name}` : href;
 }
 
 type Status = {
   id: string;
+  created_at: string;
+  visibility: string;
   content: string;
+  replies_count: number;
+  reblogs_count: number;
+  favourites_count: number;
+  favourited?: boolean;
+  reblogged?: boolean;
   account: { username: string; acct: string; display_name: string; avatar: string };
   reblog: Status | null;
 };
 
+const counts = (status: Status) => ({
+  replies: status.replies_count,
+  reblogs: status.reblogs_count,
+  favourites: status.favourites_count,
+  reblogged: status.reblogged ?? false,
+  favourited: status.favourited ?? false,
+});
+
 function toPost(status: Status, host: string): Post {
   const shown = status.reblog ?? status;
   const { account } = shown;
+  const booster = status.reblog ? status.account : null;
   return {
     id: status.id,
+    statusId: shown.id,
     name: account.display_name || account.username,
     handle: `@${account.acct}`,
     avatar: account.avatar,
     text: markdown(shown.content, host),
+    boostedBy: booster ? booster.display_name || booster.username : '',
+    boostedAvatar: booster?.avatar ?? '',
+    posted: Date.parse(shown.created_at),
+    visibility: shown.visibility,
+    ...counts(shown),
   };
 }
 
@@ -244,13 +272,13 @@ const feeds = new Map<string, Feed>();
 function feedFor(host: string, home: boolean, tag: string): Feed {
   const key = JSON.stringify([host, home, tag]);
   let feed = feeds.get(key);
-  if (!feed) feeds.set(key, feed = { host, home, tag, posts: [], hasNext: true });
+  if (!feed) feeds.set(key, feed = { host, home, tag, posts: [], hasNext: true, signedIn: false });
   return feed;
 }
 
 async function signedIn(host: string, store: Store): Promise<boolean> {
   return host in SERVERS && store.get(`${SERVERS[host]}.client`) !== null
-    && (await (await providerFor(host, store)).session(store)).signedIn;
+    && active(await (await providerFor(host, store)).session(store));
 }
 
 async function append(feed: Feed, store: Store) {
@@ -259,7 +287,8 @@ async function append(feed: Feed, store: Store) {
   const query = last ? `&max_id=${last.id}` : '';
   const path = tag ? `tag/${encodeURIComponent(tag)}` : home ? 'home' : 'public';
   const url = `${base(host)}/api/v1/timelines/${path}?limit=20${query}`;
-  const response = home || (tag && await signedIn(host, store))
+  // Signed in, a timeline says which posts the person has liked or boosted.
+  const response = home || await signedIn(host, store)
     ? await (await providerFor(host, store)).fetch(store, url)
     : await fetch(url, { exactTimeout: TIMEOUT });
   if (response.status === 401 || response.status === 422) throw failure('auth-required');
@@ -267,6 +296,17 @@ async function append(feed: Feed, store: Store) {
   const page = (await response.json()) as Status[];
   feed.posts = feed.posts.concat(page.map((s) => toPost(s, host)));
   feed.hasNext = page.length > 0;
+}
+
+// Mastodon answers with the status as it now stands, which every timeline showing it takes.
+async function act(host: string, statusId: string, action: string, store: Store): Promise<Result<'act'>> {
+  const url = `${base(host)}/api/v1/statuses/${encodeURIComponent(statusId)}/${action}`;
+  const body = (await (await providerFor(host, store)).json(store, url, { method: 'POST' })) as Status;
+  const updated = body.reblog ?? body;
+  for (const feed of feeds.values()) {
+    feed.posts = feed.posts.map((p) => (p.statusId === updated.id ? { ...p, ...counts(updated) } : p));
+  }
+  return { ok: true };
 }
 
 async function loadInstance(host: string): Promise<Result<'loadInstance'>> {
@@ -292,9 +332,11 @@ const sources: Sources = {
   loadRecent: (_args, store) => loadRecent(store),
   loadTimeline: async ([host, home, tag], store) => {
     const feed = feedFor(host, home, tag);
+    feed.signedIn = await signedIn(host, store);
     if (feed.posts.length === 0) await append(feed, store);
     return { ...feed };
   },
+  act: ([host, statusId, action], store) => act(host, statusId, action, store),
   nextPage: async ([host, home, tag], store) => {
     await append(feedFor(host, home, tag), store);
     return { ok: true };

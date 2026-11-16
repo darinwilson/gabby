@@ -1,0 +1,4 @@
+tamber gabby
+
+icons
+  icon.globe = icon(sf "globe", svg "icons/globe.svg")

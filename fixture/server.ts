@@ -18,12 +18,25 @@ const CORS = {
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: CORS });
 
-const status = (id: string, host: string, text: string) => ({
+// An hour before the tests' clock starts, so every post reads "1h".
+const POSTED = '2025-12-31T23:00:00.000Z';
+
+const status = (id: string, host: string, text: string, account = { username: 'ada', acct: `ada@${host}`, display_name: 'Ada', avatar: '' }) => ({
   id,
+  created_at: POSTED,
+  visibility: 'public',
   content: `<p>${text}</p>`,
-  reblog: null,
-  account: { username: 'ada', acct: `ada@${host}`, display_name: 'Ada', avatar: '' },
+  replies_count: 10,
+  reblogs_count: 6,
+  favourites_count: 1,
+  favourited: false,
+  reblogged: false,
+  reblog: null as unknown,
+  account,
 });
+
+const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
+  ({ ...status(id, host, '', { username: 'grace', acct: `grace@${host}`, display_name: 'Grace', avatar: '' }), reblog: original });
 
 const authorized = (req: Request) => req.headers.get('Authorization') === `Bearer ${TOKEN}`;
 const unauthorized = () => json({ error: 'The access token is invalid' }, 401);
@@ -36,7 +49,7 @@ async function write(req: Request, host: string, route: string) {
       ? await req.json()
       : Object.fromEntries(await req.formData());
     if (!body.status) return json({ error: "Validation failed: Text can't be blank" }, 422);
-    return json({ ...status('new', host, body.status), account: ME });
+    return json(status('new', host, body.status, ME));
   }
   const match = route.match(/^(POST|DELETE) \/api\/v1\/statuses\/([^/]+)(?:\/(\w+))?$/);
   if (!match) return null;
@@ -44,10 +57,10 @@ async function write(req: Request, host: string, route: string) {
   const target = status(id, host, 'A post');
   if (method === 'DELETE' && !action) return json(target);
   switch (method === 'POST' && action) {
-    case 'favourite': return json({ ...target, favourited: true });
-    case 'unfavourite': return json({ ...target, favourited: false });
-    case 'reblog': return json({ ...status(`r${id}`, host, ''), account: ME, reblog: { ...target, reblogged: true }, reblogged: true });
-    case 'unreblog': return json({ ...target, reblogged: false });
+    case 'favourite': return json({ ...target, favourited: true, favourites_count: target.favourites_count + 1 });
+    case 'unfavourite': return json(target);
+    case 'reblog': return json({ ...status(`r${id}`, host, '', ME), reblog: { ...target, reblogged: true, reblogs_count: target.reblogs_count + 1 }, reblogged: true });
+    case 'unreblog': return json(target);
   }
   return null;
 }
@@ -81,7 +94,10 @@ Bun.serve({
         return json(firstPage ? [status('t1', host, 'A post about birds')] : []);
       case 'GET /api/v1/timelines/home':
         if (!authorized(req)) return unauthorized();
-        return json(firstPage ? [status('h1', host, 'A post from someone you follow')] : []);
+        return json(firstPage ? [
+          status('h1', host, 'A post from someone you follow'),
+          boost('h2', host, status('b1', host, 'A post someone you follow boosted')),
+        ] : []);
       case 'GET /api/v1/accounts/verify_credentials':
         if (!authorized(req)) return unauthorized();
         return json(ME);
@@ -94,7 +110,7 @@ Bun.serve({
         return new Response(null, { status: 302, headers: { Location: back.href } });
       }
       case 'POST /oauth/token':
-        return json({ access_token: TOKEN, token_type: 'Bearer', scope: 'read', created_at: 0 });
+        return json({ access_token: TOKEN, token_type: 'Bearer', scope: 'read write', created_at: 0 });
       case 'POST /oauth/revoke':
         return json({});
       default:

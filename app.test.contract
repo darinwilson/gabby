@@ -103,3 +103,45 @@ test "a hashtag shows its posts under its name, and Back returns"
   tap "back"
   clock settle
   expect tree missing "back"
+
+test "a boosted post names who boosted it"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  expect text "boosted-h2" == "Grace boosted"
+  expect text "text-h2" == "A post someone you follow boosted"
+  expect tree missing "boosted-h1"
+
+test "liking and boosting a post count it"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  expect text "replies-h1" == "10"
+  expect text "reblogs-h1" == "6"
+  expect text "favourites-h1" == "1"
+  tap "favourite-h1"
+  clock data
+  clock data
+  expect text "favourites-h1" == "2"
+  tap "boost-h1"
+  clock data
+  clock data
+  expect text "reblogs-h1" == "7"
+
+test "signed out, a post can't be liked"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect disabled "favourite-1"
+  expect disabled "boost-1"

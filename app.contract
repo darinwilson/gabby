@@ -1,5 +1,9 @@
 use OAuthResult from "@exact/oauth"
 
+atom hashtag link="tag:" role="link" padding-inline="10px" border-radius="999px" color="light-dark(#4338ca, #c7d2fe)" background-color="light-dark(#eef2ff, #2e2a5c)"
+  :hover
+    background-color="light-dark(#e0e7ff, #3a3570)"
+
 shape Connection
   ok: bool
   error: string
@@ -7,10 +11,20 @@ shape Connection
 
 shape Post
   id: string
+  statusId: string
   name: string
   handle: string
   avatar: string
   text: string
+  boostedBy: string
+  boostedAvatar: string
+  posted: number
+  visibility: string
+  replies: number
+  reblogs: number
+  favourites: number
+  reblogged: bool
+  favourited: bool
 
 shape Timeline
   host: string
@@ -18,6 +32,7 @@ shape Timeline
   tag: string
   posts: Post[]
   hasNext: bool
+  signedIn: bool
 
 shape Reply
   ok: bool
@@ -73,6 +88,7 @@ component Gabby
   derive host = top(nav).name == "timeline" or home or tag != "" ? top(nav).params.host : ""
   resource timeline = loadTimeline(host, home, tag) when host != "" as shape Timeline else empty() transient
   mutation more as shape Reply refreshes timeline
+  mutation acted as shape Reply refreshes timeline
   derive loading = pending(timeline) or pending(more)
   derive posts = timeline.host == host and timeline.home == home and timeline.tag == tag ? timeline.posts : []
   resource viewport = exactViewport() as shape Viewport
@@ -80,7 +96,7 @@ component Gabby
   derive centered = wide and viewport.width >= 1264
   resource instance = loadInstance(host) when host != "" and wide as shape Instance else empty()
   resource profile = loadProfile(host) when home and wide as shape Profile else empty()
-  derive rows = pending(more) ? posts.concat([Post(id="loading", name="", handle="", avatar="", text="")]) : posts
+  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false)]) : posts
   derive timelineError = match failure(timeline) { case some(f) => (f.code == "auth-required" ? "This server only shows its public timeline to signed-in users." : "Couldn't load the timeline."), case none => "" }
 
   action edit(v: string)
@@ -113,6 +129,14 @@ component Gabby
     nav = back(nav)
   action follow(url: string)
     nav = go(nav, url)
+  action openTag(e: AtomEvent)
+    nav = go(nav, e.href.slice(4))
+  action favourite(p: Post)
+    if timeline.signedIn and not pending(acted)
+      send acted = act(host, p.statusId, p.favourited ? "unfavourite" : "favourite")
+  action boost(p: Post)
+    if timeline.signedIn and not pending(acted)
+      send acted = act(host, p.statusId, p.reblogged ? "unreblog" : "reblog")
 
   view
     main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow width="100%" height="100%"
@@ -205,9 +229,33 @@ component Gabby
                         else
                           image p.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
                           column flex=1 min-width=0 gap=2
-                            text p.name overflow-wrap="break-word" font-weight=600 testId=`name-${p.id}`
+                            if p.boostedBy != ""
+                              row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2
+                                image "symbol:repeat" aria-hidden=true
+                                if p.boostedAvatar != ""
+                                  image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
+                                text `${p.boostedBy} boosted` testId=`boosted-${p.id}`
+                            row gap=6 align-items="center" flex-wrap="wrap"
+                              text p.name flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`name-${p.id}`
+                              image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
+                                aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
+                                font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`visibility-${p.id}`
+                              text "·" font="-exact-footnote" color="-exact-secondary-label" aria-hidden=true
+                              time datetime=p.posted format="relative" max-width="100%" font="-exact-footnote" color="-exact-secondary-label" testId=`time-${p.id}`
                             text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
-                            text p.text markup="markdown" overflow-wrap="break-word" margin-top=4 testId=`text-${p.id}`
+                            text p.text markup="markdown" atoms="hashtag" atompress=openTag overflow-wrap="break-word" margin-top=4 testId=`text-${p.id}`
+                            row gap=16 margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
+                              button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" min-width=44 min-height=44 testId=`reply-${p.id}`
+                                image "symbol:reply" aria-hidden=true
+                                text (p.replies > 0 ? `${p.replies}` : "") testId=`replies-${p.id}`
+                              button appearance="none" press=boost(p) disabled=(not timeline.signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost") aria-pressed=p.reblogged
+                                display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`boost-${p.id}`
+                                image "symbol:repeat" aria-hidden=true
+                                text (p.reblogs > 0 ? `${p.reblogs}` : "") testId=`reblogs-${p.id}`
+                              button appearance="none" press=favourite(p) disabled=(not timeline.signedIn) aria-label=(p.favourited ? "Unlike" : "Like") aria-pressed=p.favourited
+                                display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`favourite-${p.id}`
+                                image (p.favourited ? "symbol:star-fill" : "symbol:star") aria-hidden=true
+                                text (p.favourites > 0 ? `${p.favourites}` : "") testId=`favourites-${p.id}`
 
               if centered and instance.domain == host
                 column width="calc(50% - 300px)" flex-shrink=0
