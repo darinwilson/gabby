@@ -588,3 +588,64 @@ test "picking more files than a post can have adds what fits, and Cancel discard
   clock settle
   clock data
   expect tree missing "compose-media-m1"
+
+test "a reply from a post's view mentions everyone but you, and shows in the thread"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "open-h1"
+  clock settle
+  clock data
+  tap "focus-reply-h1"
+  clock settle
+  clock data
+  expect text "reply-title" == "Reply"
+  expect text "reply-to" == "Replying to Ada"
+  expect text "compose-left" == "488"
+  expect text "compose-post" == "Reply"
+  type "compose-text" "@ada@mastodon.art Thanks"
+  tap "compose-post"
+  clock data
+  clock data
+  clock settle
+  clock data
+  expect tree missing "reply-title"
+  expect text "post-title" == "Post"
+  expect text "thread-text-new" == "@ada@mastodon.art Thanks"
+  expect text "focus-replies-h1" == "11"
+  tap "post-back"
+  clock settle
+  clock data
+  expect text "replies-h1" == "11"
+
+test "a reply from the timeline keeps the post's visibility, and Cancel goes back"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "reply-l1"
+  clock settle
+  clock data
+  expect text "reply-to" == "Replying to Lin"
+  expect text "compose-visibility" == "private"
+  tap "reply-back"
+  clock settle
+  expect tree missing "reply-title"
+  expect text "timeline-title" == "Home"
+  expect text "replies-l1" == "10"
+
+test "signed out, a post can't be replied to"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect disabled "reply-2"
