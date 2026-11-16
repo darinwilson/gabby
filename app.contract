@@ -25,6 +25,8 @@ shape Post
   favourites: number
   reblogged: bool
   favourited: bool
+  accountId: string
+  pinned: bool
 
 shape Timeline
   host: string
@@ -44,6 +46,32 @@ shape Thread
   post: Post
   replies: Post[]
   signedIn: bool
+
+shape Field
+  key: string
+  name: string
+  value: string
+
+// An account's profile and its posts: pinned ones first, then the rest newest first.
+shape Person
+  host: string
+  id: string
+  name: string
+  handle: string
+  avatar: string
+  banner: string
+  bio: string
+  fields: Field[]
+  followers: number
+  following: number
+  statuses: number
+  pinned: Post[]
+  posts: Post[]
+  hasNext: bool
+  signedIn: bool
+  self: bool
+  followed: bool
+  requested: bool
 
 shape Account
   host: string
@@ -75,6 +103,7 @@ routes nav
     feed "/feed/:host"
     tag "/tag/:host/:tag"
     post "/post/:host/:id"
+    account "/account/:host/:id"
 
 component Gabby
   state draft = "" persist
@@ -108,7 +137,7 @@ component Gabby
   derive centered = wide and viewport.width >= 1264
   resource instance = loadInstance(host) when host != "" and wide as shape Instance else empty()
   resource profile = loadProfile(host) when home and wide as shape Profile else empty()
-  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false)]) : posts
+  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false)]) : posts
   derive timelineError = match failure(timeline) { case some(f) => (f.code == "auth-required" ? "This server only shows its public timeline to signed-in users." : "Couldn't load the timeline."), case none => "" }
 
   action edit(v: string)
@@ -148,6 +177,11 @@ component Gabby
       nav = push(nav, path("post", host, p.statusId))
   action showPost(h: string, id: string)
     nav = push(nav, path("post", h, id))
+  action openAccount(p: Post)
+    if p.accountId != ""
+      nav = push(nav, path("account", host, p.accountId))
+  action showAccount(h: string, id: string)
+    nav = push(nav, path("account", h, id))
   action postChanged
     refresh timeline
   action favourite(p: Post)
@@ -241,12 +275,14 @@ component Gabby
                   list id="posts" testId="posts" virtualized=true appearance="none" flex=1 min-height=0
                     estimated-item-height=120 reachend=loadMore reach-margin="100%"
                     for p in rows key=p.id
-                      PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+                      PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, profile=openAccount, boost=boost, favourite=favourite, openTag=openTag, focused=false)
 
               if centered and instance.domain == host
                 column width="calc(50% - 300px)" flex-shrink=0
         if e.name == "post"
-          PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, back=back, show=showPost, openTag=openTag, changed=postChanged)
+          PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, back=back, show=showPost, person=showAccount, openTag=openTag, changed=postChanged)
+        if e.name == "account"
+          PersonView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, back=back, show=showPost, person=showAccount, openTag=openTag, changed=postChanged)
 
 // A post and the posts around it: what it replies to above, its replies below.
 component PostView
@@ -257,6 +293,7 @@ component PostView
     wide: bool
     back: action
     show: action
+    person: action
     openTag: action
     changed: action
   resource thread = loadThread(host, id) as shape Thread else empty() transient
@@ -267,6 +304,9 @@ component PostView
   action open(p: Post)
     if p.statusId != id
       show(host, p.statusId)
+  action openPerson(p: Post)
+    if p.accountId != ""
+      person(host, p.accountId)
   action afterAct
     changed()
   action favourite(p: Post)
@@ -295,10 +335,110 @@ component PostView
       else
         list id="thread" testId="thread" appearance="none" flex=1 min-height=0
           for p in thread.ancestors key=p.id
-            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, boost=boost, favourite=favourite, openTag=openTag, focused=false)
-          PostRow(p=thread.post, wide=wide, signedIn=thread.signedIn, prefix="focus-", focused=true, open=open, boost=boost, favourite=favourite, openTag=openTag)
+            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+          PostRow(p=thread.post, wide=wide, signedIn=thread.signedIn, prefix="focus-", focused=true, open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag)
           for p in thread.replies key=p.id
-            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+
+// An account's profile above its posts.
+component PersonView
+  props
+    route: string
+    host: string
+    id: string
+    wide: bool
+    back: action
+    show: action
+    person: action
+    openTag: action
+    changed: action
+  resource who = loadPerson(host, id) as shape Person else empty() transient
+  mutation acted as shape Reply refreshes who then afterAct
+  mutation more as shape Reply refreshes who
+  mutation followed as shape Reply refreshes who
+  derive ready = who.host == host and who.id == id
+  derive error = match failure(who) { case some(f) => (f.code == "not-found" ? "This account isn't available." : f.code == "auth-required" ? "This server only shows profiles to signed-in users." : f.code == "auth-expired" ? "Log in again to see this profile." : "Couldn't load the profile."), case none => "" }
+  derive followLabel = who.followed ? "Unfollow" : who.requested ? "Requested" : "Follow"
+
+  action open(p: Post)
+    show(host, p.statusId)
+  action openPerson(p: Post)
+    if p.accountId != id
+      person(host, p.accountId)
+  action afterAct
+    changed()
+  action favourite(p: Post)
+    if who.signedIn and not pending(acted)
+      send acted = act(host, p.statusId, p.favourited ? "unfavourite" : "favourite")
+  action boost(p: Post)
+    if who.signedIn and not pending(acted)
+      send acted = act(host, p.statusId, p.reblogged ? "unreblog" : "reblog")
+  action toggleFollow
+    if who.signedIn and not pending(followed)
+      send followed = setFollow(host, id, not (who.followed or who.requested))
+  action loadMore
+    if ready and who.hasNext and not pending(more)
+      send more = morePosts(host, id)
+  action retry
+    refresh who
+
+  view
+    column navigationKey=route navigationScroll="person" position="absolute" inset=0 display="flex" flex-direction="column"
+      header
+        button id="back" press=back testId="person-back"
+          text "Back"
+        text (ready ? who.name : "Profile") role="heading" aria-level=2 testId="person-title"
+      if error != "" and not ready
+        column padding=16 gap=12 align-items="center"
+          text error text-align="center" testId="person-error"
+          button press=retry buttonStyle="bordered" testId="person-retry"
+            text "Try Again"
+      else if not ready
+        column padding=16 align-items="center"
+          progress aria-label="Loading" testId="person-loading"
+      else
+        list id="person" testId="person" appearance="none" flex=1 min-height=0
+          column width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto" padding-bottom=16
+            border-style="solid" border-color="-exact-separator" border-width=(wide ? "0 1px 1px" : "0 0 1px") testId="person-about"
+            if who.banner != ""
+              image who.banner width="100%" aspect-ratio="3" object-fit="cover" alt="" testId="person-banner"
+            else
+              column width="100%" aspect-ratio="3" background-color="-exact-fill"
+            column padding-left=16 padding-right=16 gap=10
+              row align-items="flex-end" justify-content="space-between" gap=12 margin-top=-36
+                if who.avatar != ""
+                  image who.avatar width=80 height=80 border-radius="50%" border-width=3 border-style="solid" border-color="-exact-background" object-fit="cover" alt="" testId="person-avatar"
+                else
+                  column width=80 height=80 border-radius="50%" border-width=3 border-style="solid" border-color="-exact-background" background-color="-exact-fill" testId="person-avatar"
+                if who.signedIn and not who.self
+                  button press=toggleFollow disabled=pending(followed) buttonStyle=(who.followed or who.requested ? "bordered" : "filled") testId="person-follow"
+                    text followLabel
+              column gap=2
+                text who.name font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="person-name"
+                text who.handle font="-exact-subheadline" color="-exact-secondary-label" overflow-wrap="break-word" testId="person-handle"
+              if who.bio != ""
+                text who.bio markup="markdown" atoms="hashtag" atompress=openTag overflow-wrap="break-word" testId="person-bio"
+              if who.fields.length > 0
+                column gap=6 testId="person-fields"
+                  for f in who.fields key=f.key
+                    row gap=8 flex-wrap="wrap" align-items="baseline"
+                      text f.name font="-exact-subheadline" font-weight=600 testId=`field-name-${f.key}`
+                      text f.value markup="markdown" overflow-wrap="break-word" min-width=0 testId=`field-value-${f.key}`
+              row gap=16 flex-wrap="wrap" font="-exact-subheadline" testId="person-counts"
+                text `${who.statuses} ${who.statuses == 1 ? "post" : "posts"}` testId="person-statuses"
+                text `${who.following} following` testId="person-following"
+                text `${who.followers} ${who.followers == 1 ? "follower" : "followers"}` testId="person-followers"
+          for p in who.pinned key=`pinned-${p.id}`
+            PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="pinned-", open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+          if who.pinned.length == 0 and who.posts.length == 0
+            text "No posts yet." padding=16 text-align="center" color="-exact-secondary-label" testId="person-empty"
+          for p in who.posts key=p.id
+            PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="person-", open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+          if pending(more)
+            column padding=16 align-items="center"
+              progress aria-label="Loading" testId="person-more"
+          if who.hasNext
+            column intersect=loadMore intersect-margin="0px 0px 800px 0px" height=1
 
 // One post in a list. Tapping it opens the post; its buttons and hashtags do their own thing.
 component PostRow
@@ -320,6 +460,7 @@ component PostRow
     prefix: string
     focused: bool
     open: action
+    profile: action
     boost: action
     favourite: action
     openTag: action
@@ -329,13 +470,18 @@ component PostRow
       if p.id == "loading"
         progress aria-label="Loading" testId="loading"
       else
-        if p.avatar != ""
-          image p.avatar width=44 height=44 border-radius=22 object-fit="cover" flex-shrink=0 alt=""
-        else
-          column width=44 height=44 border-radius=22 flex-shrink=0 background-color="-exact-fill"
+        button appearance="none" press=profile(p) aria-label=`${p.name}'s profile` padding=0 flex-shrink=0 border-radius=22 testId=`${prefix}avatar-${p.id}`
+          if p.avatar != ""
+            image p.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
+          else
+            column width=44 height=44 border-radius=22 background-color="-exact-fill"
         column flex=1 min-width=0
           // The press is on the content only, so the action buttons aren't nested in it.
           column press=pressed pointerdown=down gap=2 testId=`${prefix}open-${p.id}`
+            if p.pinned
+              row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2 testId=`${prefix}pinned-${p.id}`
+                image "symbol:pin" aria-hidden=true
+                text "Pinned"
             if p.boostedBy != ""
               row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2
                 image "symbol:repeat" aria-hidden=true
@@ -356,15 +502,15 @@ component PostRow
               row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
                 time datetime=p.posted format="date-medium"
                 time datetime=p.posted format="time-short"
-          row gap=16 margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
-            button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
+          row column-gap=16 flex-wrap="wrap" margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
+            button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
               image "symbol:reply" aria-hidden=true
               text (p.replies > 0 ? `${p.replies}` : "") testId=`${prefix}replies-${p.id}`
             button appearance="none" press=boost(p) disabled=(not signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost") aria-pressed=p.reblogged
-              display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`${prefix}boost-${p.id}`
+              display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`${prefix}boost-${p.id}`
               image "symbol:repeat" aria-hidden=true
               text (p.reblogs > 0 ? `${p.reblogs}` : "") testId=`${prefix}reblogs-${p.id}`
             button appearance="none" press=favourite(p) disabled=(not signedIn) aria-label=(p.favourited ? "Unlike" : "Like") aria-pressed=p.favourited
-              display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`${prefix}favourite-${p.id}`
+              display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`${prefix}favourite-${p.id}`
               image (p.favourited ? "symbol:star-fill" : "symbol:star") aria-hidden=true
               text (p.favourites > 0 ? `${p.favourites}` : "") testId=`${prefix}favourites-${p.id}`

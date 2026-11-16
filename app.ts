@@ -233,8 +233,17 @@ type Status = {
   favourites_count: number;
   favourited?: boolean;
   reblogged?: boolean;
-  account: { username: string; acct: string; display_name: string; avatar: string };
+  account: { id: string; username: string; acct: string; display_name: string; avatar: string };
   reblog: Status | null;
+};
+
+type AccountJson = Status['account'] & {
+  header: string;
+  note: string;
+  fields?: { name: string; value: string }[];
+  followers_count: number;
+  following_count: number;
+  statuses_count: number;
 };
 
 const counts = (status: Status) => ({
@@ -261,6 +270,8 @@ function toPost(status: Status, host: string): Post {
     posted: Date.parse(shown.created_at),
     visibility: shown.visibility,
     ...counts(shown),
+    accountId: account.id,
+    pinned: false,
   };
 }
 
@@ -336,6 +347,94 @@ async function loadThread(host: string, id: string, store: Store): Promise<Threa
   return thread;
 }
 
+type Person = Result<'loadPerson'>;
+
+// Kept per account, so a follow or a page of posts adds to the profile as it was loaded.
+const people = new Map<string, Person>();
+// Profiles are read on every open; only the refresh straight after a change reads the kept copy.
+const personActed = new Set<string>();
+
+async function read(host: string, path: string, signed: boolean, store: Store): Promise<unknown> {
+  const url = `${base(host)}${path}`;
+  const response = signed
+    ? await (await providerFor(host, store)).fetch(store, url)
+    : await fetch(url, { exactTimeout: TIMEOUT });
+  if (response.status === 401) throw failure(signed ? 'auth-expired' : 'auth-required');
+  if (response.status === 404) throw failure('not-found');
+  if (!response.ok) throw failure('http');
+  return response.json();
+}
+
+const POSTS_PAGE = 20;
+const postsPath = (id: string, maxId?: string) =>
+  `/api/v1/accounts/${encodeURIComponent(id)}/statuses?limit=${POSTS_PAGE}&exclude_replies=true${maxId ? `&max_id=${maxId}` : ''}`;
+
+// Mastodon's own profile page: replies left out, pinned posts first.
+async function loadPerson(host: string, id: string, store: Store): Promise<Person> {
+  const key = JSON.stringify([host, id]);
+  const signed = await signedIn(host, store);
+  const kept = people.get(key);
+  if (kept && personActed.delete(key)) return { ...kept, signedIn: signed };
+  const at = `/api/v1/accounts/${encodeURIComponent(id)}`;
+  const [account, pinned, page, relations, me] = (await Promise.all([
+    read(host, at, signed, store),
+    read(host, `${at}/statuses?pinned=true`, signed, store),
+    read(host, postsPath(id), signed, store),
+    signed ? read(host, `/api/v1/accounts/relationships?id[]=${encodeURIComponent(id)}`, true, store) : [],
+    signed ? read(host, '/api/v1/accounts/verify_credentials', true, store) : null,
+  ])) as [AccountJson, Status[], Status[], { following: boolean; requested: boolean }[], { id: string } | null];
+  const person: Person = {
+    host,
+    id,
+    name: account.display_name || account.username,
+    handle: account.acct.includes('@') ? `@${account.acct}` : `@${account.acct}@${host}`,
+    avatar: account.avatar,
+    // Mastodon names a placeholder image when no banner is set.
+    banner: !account.header || account.header.endsWith('/missing.png') ? '' : account.header,
+    bio: markdown(account.note ?? '', host),
+    fields: (account.fields ?? []).map((f, i) => ({ key: String(i), name: f.name, value: markdown(f.value, host) })),
+    followers: account.followers_count,
+    following: account.following_count,
+    statuses: account.statuses_count,
+    pinned: pinned.map((s) => ({ ...toPost(s, host), pinned: true })),
+    posts: page.map((s) => toPost(s, host)),
+    hasNext: page.length > 0,
+    signedIn: signed,
+    self: me?.id === id,
+    followed: relations[0]?.following ?? false,
+    requested: relations[0]?.requested ?? false,
+  };
+  people.set(key, person);
+  return person;
+}
+
+async function morePosts(host: string, id: string, store: Store): Promise<Result<'morePosts'>> {
+  const key = JSON.stringify([host, id]);
+  const person = people.get(key);
+  if (!person || !person.hasNext) return { ok: true };
+  const after = person.posts.at(-1)?.id;
+  const page = (await read(host, postsPath(id, after), await signedIn(host, store), store)) as Status[];
+  // act() or setFollow() may have replaced the profile while the page loaded.
+  const now = people.get(key);
+  if (!now || now.posts.at(-1)?.id !== after) return { ok: true };
+  people.set(key, { ...now, posts: now.posts.concat(page.map((s) => toPost(s, host))), hasNext: page.length > 0 });
+  personActed.add(key);
+  return { ok: true };
+}
+
+async function setFollow(host: string, id: string, follow: boolean, store: Store): Promise<Result<'setFollow'>> {
+  const url = `${base(host)}/api/v1/accounts/${encodeURIComponent(id)}/${follow ? 'follow' : 'unfollow'}`;
+  const relation = (await (await providerFor(host, store)).json(store, url, { method: 'POST' })) as { following: boolean; requested: boolean };
+  const key = JSON.stringify([host, id]);
+  const person = people.get(key);
+  if (person) {
+    const change = Number(relation.following) - Number(person.followed);
+    people.set(key, { ...person, followed: relation.following, requested: relation.requested, followers: person.followers + change });
+    personActed.add(key);
+  }
+  return { ok: true };
+}
+
 // Mastodon answers with the status as it now stands, which every timeline and thread showing it takes.
 async function act(host: string, statusId: string, action: string, store: Store): Promise<Result<'act'>> {
   const url = `${base(host)}/api/v1/statuses/${encodeURIComponent(statusId)}/${action}`;
@@ -343,6 +442,10 @@ async function act(host: string, statusId: string, action: string, store: Store)
   const updated = body.reblog ?? body;
   const take = (p: Post) => (p.statusId === updated.id ? { ...p, ...counts(updated) } : p);
   for (const feed of feeds.values()) feed.posts = feed.posts.map(take);
+  for (const [key, person] of people) {
+    personActed.add(key);
+    people.set(key, { ...person, pinned: person.pinned.map(take), posts: person.posts.map(take) });
+  }
   for (const [key, thread] of threads) {
     acted.add(key);
     threads.set(key, { ...thread, ancestors: thread.ancestors.map(take), post: take(thread.post), replies: thread.replies.map(take) });
@@ -379,6 +482,9 @@ const sources: Sources = {
   },
   loadThread: ([host, id], store) => loadThread(host, id, store),
   act: ([host, statusId, action], store) => act(host, statusId, action, store),
+  loadPerson: ([host, id], store) => loadPerson(host, id, store),
+  morePosts: ([host, id], store) => morePosts(host, id, store),
+  setFollow: ([host, id, follow], store) => setFollow(host, id, follow, store),
   nextPage: async ([host, home, tag], store) => {
     await append(feedFor(host, home, tag), store);
     return { ok: true };
