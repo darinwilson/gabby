@@ -298,13 +298,54 @@ async function append(feed: Feed, store: Store) {
   feed.hasNext = page.length > 0;
 }
 
-// Mastodon answers with the status as it now stands, which every timeline showing it takes.
+type Thread = Result<'loadThread'>;
+
+// Each thread as last loaded. Loading fetches it again, so a post opened again shows its new
+// replies; only the refresh after act() reads the copy act() updated (the keys in `acted`).
+const threads = new Map<string, Thread>();
+const acted = new Set<string>();
+
+async function loadThread(host: string, id: string, store: Store): Promise<Thread> {
+  const key = JSON.stringify([host, id]);
+  const signed = await signedIn(host, store);
+  const kept = threads.get(key);
+  if (kept && acted.delete(key)) return { ...kept, signedIn: signed };
+  const get = async (statusId: string, path: string) => {
+    const url = `${base(host)}/api/v1/statuses/${encodeURIComponent(statusId)}${path}`;
+    const response = signed
+      ? await (await providerFor(host, store)).fetch(store, url)
+      : await fetch(url, { exactTimeout: TIMEOUT });
+    if (response.status === 401) throw failure(signed ? 'auth-expired' : 'auth-required');
+    if (response.status === 404) throw failure('not-found');
+    if (!response.ok) throw failure('http');
+    return response.json();
+  };
+  const status = (await get(id, '')) as Status;
+  // A boost has no thread of its own; the post it boosted does.
+  const shown = status.reblog ?? status;
+  const context = (await get(shown.id, '/context')) as { ancestors: Status[]; descendants: Status[] };
+  const thread = {
+    host,
+    id,
+    ancestors: context.ancestors.map((s) => toPost(s, host)),
+    post: toPost(shown, host),
+    replies: context.descendants.map((s) => toPost(s, host)),
+    signedIn: signed,
+  };
+  threads.set(key, thread);
+  return thread;
+}
+
+// Mastodon answers with the status as it now stands, which every timeline and thread showing it takes.
 async function act(host: string, statusId: string, action: string, store: Store): Promise<Result<'act'>> {
   const url = `${base(host)}/api/v1/statuses/${encodeURIComponent(statusId)}/${action}`;
   const body = (await (await providerFor(host, store)).json(store, url, { method: 'POST' })) as Status;
   const updated = body.reblog ?? body;
-  for (const feed of feeds.values()) {
-    feed.posts = feed.posts.map((p) => (p.statusId === updated.id ? { ...p, ...counts(updated) } : p));
+  const take = (p: Post) => (p.statusId === updated.id ? { ...p, ...counts(updated) } : p);
+  for (const feed of feeds.values()) feed.posts = feed.posts.map(take);
+  for (const [key, thread] of threads) {
+    acted.add(key);
+    threads.set(key, { ...thread, ancestors: thread.ancestors.map(take), post: take(thread.post), replies: thread.replies.map(take) });
   }
   return { ok: true };
 }
@@ -336,6 +377,7 @@ const sources: Sources = {
     if (feed.posts.length === 0) await append(feed, store);
     return { ...feed };
   },
+  loadThread: ([host, id], store) => loadThread(host, id, store),
   act: ([host, statusId, action], store) => act(host, statusId, action, store),
   nextPage: async ([host, home, tag], store) => {
     await append(feedFor(host, home, tag), store);
