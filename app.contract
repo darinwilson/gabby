@@ -291,13 +291,13 @@ component Gabby
                     progress aria-label="Loading" testId="loading"
                 else
                   list id="posts" testId="posts" virtualized=true appearance="none" flex=1 min-height=0
-                    estimated-item-height=120 reachend=loadMore reach-margin="100%"
+                    estimated-item-height=120 reachend=loadMore reach-margin="100%" padding-bottom=(not wide and timeline.signedIn ? 96 : 0)
                     for p in rows key=p.id
                       PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, profile=openAccount, boost=boost, favourite=favourite, openTag=openTag, focused=false)
             if not wide and timeline.signedIn and timeline.host == host
               button press=compose aria-label="New post" appearance="none" background-color="-exact-label" color="-exact-background" position="absolute" right=16 bottom=24
                 width=56 height=56 border-radius=28 padding=0 box-shadow="0 2px 8px rgba(0, 0, 0, 0.3)" testId="compose-fab"
-                image "symbol:compose" font-size="-exact-title3"
+                image "symbol:compose" font-size="min(-exact-title3, 28px)"
 
               if centered and instance.domain == host
                 column width="calc(50% - 300px)" flex-shrink=0
