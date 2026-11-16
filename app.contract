@@ -502,15 +502,15 @@ component PostRow
               row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
                 time datetime=p.posted format="date-medium"
                 time datetime=p.posted format="time-short"
-          row gap=16 margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
-            button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
+          row column-gap=16 flex-wrap="wrap" margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
+            button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
               image "symbol:reply" aria-hidden=true
               text (p.replies > 0 ? `${p.replies}` : "") testId=`${prefix}replies-${p.id}`
             button appearance="none" press=boost(p) disabled=(not signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost") aria-pressed=p.reblogged
-              display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`${prefix}boost-${p.id}`
+              display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`${prefix}boost-${p.id}`
               image "symbol:repeat" aria-hidden=true
               text (p.reblogs > 0 ? `${p.reblogs}` : "") testId=`${prefix}reblogs-${p.id}`
             button appearance="none" press=favourite(p) disabled=(not signedIn) aria-label=(p.favourited ? "Unlike" : "Like") aria-pressed=p.favourited
-              display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`${prefix}favourite-${p.id}`
+              display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`${prefix}favourite-${p.id}`
               image (p.favourited ? "symbol:star-fill" : "symbol:star") aria-hidden=true
               text (p.favourites > 0 ? `${p.favourites}` : "") testId=`${prefix}favourites-${p.id}`
