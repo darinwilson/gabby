@@ -54,10 +54,13 @@ can sign in to) with one of these accounts:
 | `alice@example.test` | admin; followed by bob, carol and dave; has pinned posts |
 | `bob@example.test` | posts photos and boosts |
 | `carol@example.test` | a reply thread, a poll, a content warning, a direct message |
-| `dave@example.test` | no display name; 25 posts, enough to page through a timeline |
-| `erin@example.test` | locked, with no posts |
+| `dave@example.test` | no display name; 26 posts, enough to page through a timeline; has asked to follow erin |
+| `erin@example.test` | locked, with no posts and a pending follow request from dave |
 
 Every account's password is `gabby sandbox password 2026`. Signed out, GoToSocial shows the public
-timeline but refuses hashtag timelines and account lookups.
+timeline but refuses hashtag timelines and account lookups. GoToSocial's API can't backdate a
+post, so every seeded post is from the moment the sandbox was seeded.
+
+A start that is stopped before seeding finishes seeds again next time.
 
 `bun exact.mjs help` lists all commands.

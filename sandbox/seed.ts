@@ -91,6 +91,8 @@ const FOLLOWS: [string, string][] = [
   ['bob', 'alice'], ['bob', 'carol'],
   ['carol', 'alice'], ['carol', 'bob'],
   ['dave', 'alice'],
+  // erin is locked, so this stays a pending follow request.
+  ['dave', 'erin'],
 ];
 const BOOSTS: [string, string][] = [['bob', 'welcome'], ['carol', 'welcome'], ['alice', 'thread'], ['bob', 'latest']];
 const FAVOURITES: [string, string][] = [['bob', 'welcome'], ['carol', 'welcome'], ['dave', 'welcome'], ['alice', 'reply1'], ['carol', 'latest']];
@@ -232,7 +234,7 @@ export async function seed(base: string, gts: (...args: string[]) => Promise<voi
       spoiler_text: post.spoiler,
       sensitive: post.spoiler ? true : undefined,
       media_ids: mediaIds.length ? mediaIds : undefined,
-      poll: post.poll ? { options: post.poll, expires_in: 7 * 24 * 3600 } : undefined,
+      poll: post.poll ? { options: post.poll, expires_in: 30 * 24 * 3600 } : undefined,
     });
     if (post.key) statuses.set(post.key, status.id);
   }

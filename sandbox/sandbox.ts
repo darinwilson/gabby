@@ -1,16 +1,16 @@
 // A local GoToSocial server to try Gabby against a real ActivityPub server
-// without writing to a public one. See sandbox/README.md.
+// without writing to a public one. See README.md, "A GoToSocial sandbox".
 import { spawn, type Subprocess } from 'bun';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, cpSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { seed } from './seed.ts';
 
 const VERSION = '0.22.3';
 const RELEASES = `https://codeberg.org/superseriousbusiness/gotosocial/releases/download/v${VERSION}`;
 
-// Gabby's local backend: every server it names is served under /<host> here.
-const PROXY_PORT = Number(process.env.SANDBOX_PORT ?? 4790);
+// Gabby's local backend (`web-sandbox`): every server it names is served under /<host> here.
+const PROXY_PORT = 4790;
 const GTS_PORT = PROXY_PORT + 1;
 // GoToSocial builds its links from this host, so they lead back through the proxy.
 const GTS_HOST = `localhost:${PROXY_PORT}`;
@@ -19,6 +19,8 @@ const root = join(import.meta.dir, '..', '.sandbox');
 const install = join(root, `gotosocial-${VERSION}`);
 const binary = join(install, 'gotosocial');
 const data = join(root, 'data');
+// Written once seeding finishes; data without it was left by an interrupted start.
+const seeded = join(data, '.seeded');
 const config = join(root, 'config.yaml');
 
 const log = (message: string) => console.log(`sandbox: ${message}`);
@@ -30,7 +32,8 @@ async function download(name: string, sums: Map<string, string>): Promise<string
     const response = await fetch(`${RELEASES}/${name}`);
     if (!response.ok) throw new Error(`downloading ${name}: HTTP ${response.status}`);
     mkdirSync(join(root, 'downloads'), { recursive: true });
-    await Bun.write(path, response);
+    await Bun.write(`${path}.part`, response);
+    renameSync(`${path}.part`, path);
   }
   const sum = createHash('sha256').update(await Bun.file(path).bytes()).digest('hex');
   if (sum !== sums.get(name)) {
@@ -48,8 +51,8 @@ async function run(command: string[], cwd?: string, env?: Record<string, string>
   throw new Error(`${command.join(' ')} failed`);
 }
 
-// GoToSocial publishes Linux binaries only; elsewhere it builds from the
-// release's source, which needs Go.
+// GoToSocial publishes binaries for Linux and the BSDs but not macOS, where it
+// builds from the release's source, which needs Go.
 async function ensureBinary() {
   if (existsSync(binary)) return;
   const response = await fetch(`${RELEASES}/checksums.txt`);
@@ -140,76 +143,83 @@ function serveProxy() {
       const path = rest.length > 0 && HOST.test(first) ? `/${rest.join('/')}` : url.pathname;
       const headers = new Headers(request.headers);
       headers.set('host', GTS_HOST);
-      const response = await fetch(`${target}${path}${url.search}`, {
-        method: request.method,
-        headers,
-        body: request.body,
-        redirect: 'manual',
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${target}${path}${url.search}`, {
+          method: request.method,
+          headers,
+          body: request.body,
+          redirect: 'manual',
+        });
+      } catch {
+        return new Response('The sandbox proxy could not reach GoToSocial.', { status: 502 });
+      }
       const out = new Headers(response.headers);
       // fetch has already decoded the body.
       out.delete('content-encoding');
       out.delete('content-length');
-      // GoToSocial scopes its session cookie to its host; the proxy is reached at 127.0.0.1 too.
-      const cookies = response.headers.getSetCookie().map((c) => c.replace(/;\s*Domain=[^;]*/i, ''));
-      out.delete('set-cookie');
-      for (const cookie of cookies) out.append('set-cookie', cookie);
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers: out });
     },
   });
 }
 
 async function start(reset: boolean) {
-  if (reset) {
-    log('removing the old server data');
-    rmSync(data, { recursive: true, force: true });
-  }
   await ensureBinary();
-  const fresh = !existsSync(data);
-  mkdirSync(data, { recursive: true });
-  writeConfig();
-  // Before GoToSocial starts, so a taken port (a running fixture) stops nothing halfway.
+  // Before anything else, so a running fixture or sandbox stops this before it touches the data.
   let proxy: ReturnType<typeof serveProxy>;
   try {
     proxy = serveProxy();
-  } catch {
-    throw new Error(`port ${PROXY_PORT} is taken: stop the fixture server or the other sandbox first`);
-  }
-  const server = spawn([binary, '--config-path', config, 'server', 'start'], {
-    env: { ...process.env, GIN_MODE: 'release' },
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
-  const stop = () => {
-    server.kill();
-    proxy.stop(true);
-    process.exit(0);
-  };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
-  await waitForServer(server);
-  if (fresh) {
-    try {
-      await seed(`http://127.0.0.1:${GTS_PORT}`, gts);
-    } catch (error) {
-      server.kill();
-      await server.exited;
-      rmSync(data, { recursive: true, force: true });
-      throw error;
+  } catch (error) {
+    if ((error as { code?: string }).code === 'EADDRINUSE') {
+      throw new Error(`port ${PROXY_PORT} is taken: stop the fixture server or the other sandbox first`);
     }
+    throw error;
   }
-  log(`GoToSocial ${VERSION} is up. Run Gabby against it with: bun exact.mjs web-sandbox`);
-  log(`Every server address in Gabby leads here; sign in to fosstodon.org, mastodon.social or mastodon.art as one of the accounts in sandbox/seed.ts.`);
-  log('Ctrl-C stops it; the data stays in .sandbox/data until `bun exact.mjs sandbox-reset`.');
-  await server.exited;
-  throw new Error('GoToSocial stopped');
+  let server: Subprocess | undefined;
+  const stop = () => {
+    server?.kill();
+    proxy.stop(true);
+  };
+  process.on('SIGINT', () => { stop(); process.exit(0); });
+  process.on('SIGTERM', () => { stop(); process.exit(0); });
+  try {
+    const fresh = reset || !existsSync(seeded);
+    if (fresh) {
+      if (existsSync(data)) log(reset ? 'removing the old server data' : 'the last start stopped before seeding finished; seeding again');
+      rmSync(data, { recursive: true, force: true });
+    }
+    mkdirSync(data, { recursive: true });
+    writeConfig();
+    server = spawn([binary, '--config-path', config, 'server', 'start'], {
+      env: { ...process.env, GIN_MODE: 'release' },
+      stdout: 'inherit',
+      stderr: 'inherit',
+    });
+    await waitForServer(server);
+    if (fresh) {
+      await seed(`http://127.0.0.1:${GTS_PORT}`, gts);
+      writeFileSync(seeded, '');
+    }
+    log(`GoToSocial ${VERSION} is up. Run Gabby against it with: bun exact.mjs web-sandbox`);
+    log(`Every server address in Gabby leads here; sign in to fosstodon.org, mastodon.social or mastodon.art as one of the accounts in sandbox/seed.ts.`);
+    log('Ctrl-C stops it; the data stays in .sandbox/data until `bun exact.mjs sandbox-reset`.');
+    await server.exited;
+    throw new Error('GoToSocial stopped');
+  } finally {
+    stop();
+  }
 }
 
 const command = process.argv[2] ?? 'start';
-if (command === 'start') await start(false);
-else if (command === 'reset') await start(true);
-else if (command === 'clean') rmSync(root, { recursive: true, force: true });
-else {
-  console.error('usage: bun sandbox/sandbox.ts [start|reset|clean]');
+try {
+  if (command === 'start') await start(false);
+  else if (command === 'reset') await start(true);
+  else if (command === 'clean') rmSync(root, { recursive: true, force: true });
+  else {
+    console.error('usage: bun sandbox/sandbox.ts [start|reset|clean]');
+    process.exit(1);
+  }
+} catch (error) {
+  console.error(`sandbox: ${(error as Error).message}`);
   process.exit(1);
 }
