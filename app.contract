@@ -329,7 +329,10 @@ component PostRow
       if p.id == "loading"
         progress aria-label="Loading" testId="loading"
       else
-        image p.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
+        if p.avatar != ""
+          image p.avatar width=44 height=44 border-radius=22 object-fit="cover" flex-shrink=0 alt=""
+        else
+          column width=44 height=44 border-radius=22 flex-shrink=0 background-color="-exact-fill"
         column flex=1 min-width=0
           // The press is on the content only, so the action buttons aren't nested in it.
           column press=pressed pointerdown=down gap=2 testId=`${prefix}open-${p.id}`
