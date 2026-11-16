@@ -48,6 +48,7 @@ shape Thread
   signedIn: bool
 
 shape Field
+  key: string
   name: string
   value: string
 
@@ -304,7 +305,8 @@ component PostView
     if p.statusId != id
       show(host, p.statusId)
   action openPerson(p: Post)
-    person(host, p.accountId)
+    if p.accountId != ""
+      person(host, p.accountId)
   action afterAct
     changed()
   action favourite(p: Post)
@@ -418,16 +420,18 @@ component PersonView
                 text who.bio markup="markdown" atoms="hashtag" atompress=openTag overflow-wrap="break-word" testId="person-bio"
               if who.fields.length > 0
                 column gap=6 testId="person-fields"
-                  for f in who.fields key=f.name
+                  for f in who.fields key=f.key
                     row gap=8 flex-wrap="wrap" align-items="baseline"
-                      text f.name font="-exact-subheadline" font-weight=600 testId=`field-name-${f.name}`
-                      text f.value markup="markdown" overflow-wrap="break-word" min-width=0 testId=`field-value-${f.name}`
+                      text f.name font="-exact-subheadline" font-weight=600 testId=`field-name-${f.key}`
+                      text f.value markup="markdown" overflow-wrap="break-word" min-width=0 testId=`field-value-${f.key}`
               row gap=16 flex-wrap="wrap" font="-exact-subheadline" testId="person-counts"
                 text `${who.statuses} ${who.statuses == 1 ? "post" : "posts"}` testId="person-statuses"
                 text `${who.following} following` testId="person-following"
                 text `${who.followers} ${who.followers == 1 ? "follower" : "followers"}` testId="person-followers"
           for p in who.pinned key=`pinned-${p.id}`
             PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="pinned-", open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+          if who.pinned.length == 0 and who.posts.length == 0
+            text "No posts yet." padding=16 text-align="center" color="-exact-secondary-label" testId="person-empty"
           for p in who.posts key=p.id
             PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="person-", open=open, profile=openPerson, boost=boost, favourite=favourite, openTag=openTag, focused=false)
           if pending(more)

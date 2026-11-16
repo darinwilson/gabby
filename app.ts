@@ -235,7 +235,6 @@ type Status = {
   reblogged?: boolean;
   account: { id: string; username: string; acct: string; display_name: string; avatar: string };
   reblog: Status | null;
-  pinned?: boolean;
 };
 
 type AccountJson = Status['account'] & {
@@ -352,6 +351,8 @@ type Person = Result<'loadPerson'>;
 
 // Kept per account, so a follow or a page of posts adds to the profile as it was loaded.
 const people = new Map<string, Person>();
+// Profiles are read on every open; only the refresh straight after a change reads the kept copy.
+const personActed = new Set<string>();
 
 async function read(host: string, path: string, signed: boolean, store: Store): Promise<unknown> {
   const url = `${base(host)}${path}`;
@@ -373,7 +374,7 @@ async function loadPerson(host: string, id: string, store: Store): Promise<Perso
   const key = JSON.stringify([host, id]);
   const signed = await signedIn(host, store);
   const kept = people.get(key);
-  if (kept) return { ...kept, signedIn: signed };
+  if (kept && personActed.delete(key)) return { ...kept, signedIn: signed };
   const at = `/api/v1/accounts/${encodeURIComponent(id)}`;
   const [account, pinned, page, relations, me] = (await Promise.all([
     read(host, at, signed, store),
@@ -391,7 +392,7 @@ async function loadPerson(host: string, id: string, store: Store): Promise<Perso
     // Mastodon names a placeholder image when no banner is set.
     banner: !account.header || account.header.endsWith('/missing.png') ? '' : account.header,
     bio: markdown(account.note ?? '', host),
-    fields: (account.fields ?? []).map((f) => ({ name: f.name, value: markdown(f.value, host) })),
+    fields: (account.fields ?? []).map((f, i) => ({ key: String(i), name: f.name, value: markdown(f.value, host) })),
     followers: account.followers_count,
     following: account.following_count,
     statuses: account.statuses_count,
@@ -408,11 +409,16 @@ async function loadPerson(host: string, id: string, store: Store): Promise<Perso
 }
 
 async function morePosts(host: string, id: string, store: Store): Promise<Result<'morePosts'>> {
-  const person = people.get(JSON.stringify([host, id]));
+  const key = JSON.stringify([host, id]);
+  const person = people.get(key);
   if (!person || !person.hasNext) return { ok: true };
-  const page = (await read(host, postsPath(id, person.posts.at(-1)?.id), await signedIn(host, store), store)) as Status[];
-  person.posts = person.posts.concat(page.map((s) => toPost(s, host)));
-  person.hasNext = page.length > 0;
+  const after = person.posts.at(-1)?.id;
+  const page = (await read(host, postsPath(id, after), await signedIn(host, store), store)) as Status[];
+  // act() or setFollow() may have replaced the profile while the page loaded.
+  const now = people.get(key);
+  if (!now || now.posts.at(-1)?.id !== after) return { ok: true };
+  people.set(key, { ...now, posts: now.posts.concat(page.map((s) => toPost(s, host))), hasNext: page.length > 0 });
+  personActed.add(key);
   return { ok: true };
 }
 
@@ -424,6 +430,7 @@ async function setFollow(host: string, id: string, follow: boolean, store: Store
   if (person) {
     const change = Number(relation.following) - Number(person.followed);
     people.set(key, { ...person, followed: relation.following, requested: relation.requested, followers: person.followers + change });
+    personActed.add(key);
   }
   return { ok: true };
 }
@@ -435,7 +442,10 @@ async function act(host: string, statusId: string, action: string, store: Store)
   const updated = body.reblog ?? body;
   const take = (p: Post) => (p.statusId === updated.id ? { ...p, ...counts(updated) } : p);
   for (const feed of feeds.values()) feed.posts = feed.posts.map(take);
-  for (const [key, person] of people) people.set(key, { ...person, pinned: person.pinned.map(take), posts: person.posts.map(take) });
+  for (const [key, person] of people) {
+    personActed.add(key);
+    people.set(key, { ...person, pinned: person.pinned.map(take), posts: person.posts.map(take) });
+  }
   for (const [key, thread] of threads) {
     acted.add(key);
     threads.set(key, { ...thread, ancestors: thread.ancestors.map(take), post: take(thread.post), replies: thread.replies.map(take) });

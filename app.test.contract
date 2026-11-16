@@ -254,7 +254,7 @@ test "an avatar opens its profile, pinned posts first, and Back returns"
   expect text "person-statuses" == "2 posts"
   expect text "person-following" == "45 following"
   expect text "person-followers" == "120 followers"
-  expect text "field-name-Website" == "Website"
+  expect text "field-name-0" == "Website"
   expect tree has "person-bio"
   expect tree missing "person-banner"
   expect tree missing "person-follow"
@@ -313,3 +313,71 @@ test "signed in, a profile can be followed and unfollowed"
   clock data
   expect text "person-follow" == "Follow"
   expect text "person-followers" == "120 followers"
+
+test "a follow is still there when the profile is opened again"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "avatar-h1"
+  clock settle
+  clock data
+  tap "person-follow"
+  clock data
+  clock data
+  tap "person-back"
+  clock settle
+  tap "avatar-h1"
+  clock settle
+  clock data
+  expect text "person-follow" == "Unfollow"
+  expect text "person-followers" == "121 followers"
+
+test "following a locked account asks first, and the request can be withdrawn"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "avatar-l1"
+  clock settle
+  clock data
+  expect text "person-name" == "Lin"
+  expect tree has "person-empty"
+  expect tree missing "person-fields"
+  expect tree missing "person-bio"
+  tap "person-follow"
+  clock data
+  clock data
+  expect text "person-follow" == "Requested"
+  expect text "person-followers" == "3 followers"
+  tap "person-follow"
+  clock data
+  clock data
+  expect text "person-follow" == "Follow"
+
+test "your own profile has no follow button"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "avatar-m1"
+  clock settle
+  clock data
+  expect text "person-name" == "Darin"
+  expect tree has "person-post-m1"
+  expect tree missing "person-follow"
