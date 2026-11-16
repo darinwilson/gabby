@@ -13,7 +13,7 @@ const ME = { id: 'me', username: 'darin', acct: 'darin', display_name: 'Darin', 
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE',
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: CORS });
@@ -86,6 +86,21 @@ const PROFILES: Record<string, (host: string) => object> = {
 };
 const PROFILE_POSTS: Record<string, string[]> = { ada: ['2', '1'], lin: [], me: ['m1'] };
 
+const MEDIA = (id: string, host: string, type = 'image') => ({
+  id,
+  type,
+  url: `http://127.0.0.1:${port}/${host}/media/${id}.png`,
+  preview_url: type === 'image' ? `http://127.0.0.1:${port}/${host}/media/${id}.png` : null,
+  description: null,
+});
+
+// Uploaded media not yet in a post, by id. An id is the lowest free one, so a test's ids are known.
+const unattached = new Map<string, { type: string; checks: number }>();
+const freeMediaId = () => {
+  for (let n = 1; ; n++) if (!unattached.has(`m${n}`)) return `m${n}`;
+};
+const VISIBILITIES = ['public', 'unlisted', 'private', 'direct'];
+
 const authorized = (req: Request) => req.headers.get('Authorization') === `Bearer ${TOKEN}`;
 const unauthorized = () => json({ error: 'The access token is invalid' }, 401);
 
@@ -95,8 +110,16 @@ async function write(req: Request, host: string, route: string) {
     const body = req.headers.get('Content-Type')?.includes('json')
       ? await req.json()
       : Object.fromEntries(await req.formData());
-    if (!body.status) return json({ error: "Validation failed: Text can't be blank" }, 422);
-    return json(status('new', host, body.status, ME));
+    const ids: string[] = [body['media_ids[]'] ?? body.media_ids ?? []].flat();
+    const text = String(body.status ?? '');
+    if (!text && !ids.length) return json({ error: "Validation failed: Text can't be blank" }, 422);
+    if ([...text].length > 500) return json({ error: 'Validation failed: Text character limit of 500 exceeded' }, 422);
+    if (body.visibility && !VISIBILITIES.includes(body.visibility)) return json({ error: 'Validation failed: Visibility is not included in the list' }, 422);
+    if (ids.some((id) => !unattached.has(id))) return json({ error: 'Validation failed: Media is not found' }, 422);
+    if (ids.some((id) => unattached.get(id)!.checks < 1 && unattached.get(id)!.type !== 'image')) return json({ error: 'Cannot attach files that have not finished processing. Try again in a moment!' }, 422);
+    const media = ids.map((id) => MEDIA(id, host, unattached.get(id)!.type));
+    for (const id of ids) unattached.delete(id);
+    return json({ ...status('new', host, text.replace(/\n/g, '<br>'), ME), visibility: body.visibility ?? 'public', media_attachments: media });
   }
   const match = route.match(/^(POST|DELETE) \/api\/v1\/statuses\/([^/]+)(?:\/(\w+))?$/);
   if (!match) return null;
@@ -148,6 +171,31 @@ Bun.serve({
       if (url.searchParams.get('pinned') === 'true') return json(id === 'ada' ? [post('1', host)] : []);
       return json(firstPage ? PROFILE_POSTS[id].map((p) => post(p, host)) : []);
     }
+    if (route === 'POST /api/v2/media') {
+      if (!authorized(req)) return unauthorized();
+      const file = (await req.formData()).get('file');
+      if (!(file instanceof Blob) || file.size === 0) return json({ error: 'Validation failed: File is missing' }, 422);
+      const id = freeMediaId();
+      const type = /^(video|audio)\//.test(file.type) ? file.type.split('/')[0] : file.type.startsWith('image/') ? 'image' : 'unknown';
+      unattached.set(id, { type, checks: 0 });
+      // As Mastodon does, video and audio are processed after the reply: 202 with no url yet.
+      if (type === 'image') return json(MEDIA(id, host));
+      return json({ ...MEDIA(id, host, type), url: null }, 202);
+    }
+    const media = route.match(/^(GET|DELETE) \/api\/v1\/media\/([^/]+)$/);
+    if (media) {
+      if (!authorized(req)) return unauthorized();
+      const kept = unattached.get(media[2]);
+      if (!kept) return json({ error: 'Record not found' }, 404);
+      if (media[1] === 'DELETE') {
+        unattached.delete(media[2]);
+        return json(MEDIA(media[2], host, kept.type));
+      }
+      // Still processing on the first check.
+      if (kept.checks++ < 1) return json({ ...MEDIA(media[2], host, kept.type), url: null }, 206);
+      return json(MEDIA(media[2], host, kept.type));
+    }
+    if (route.startsWith('GET /media/')) return new Response(Bun.file(new URL('../assets/icon.png', import.meta.url)), { headers: CORS });
     const read = route.match(/^GET \/api\/v1\/statuses\/([^/]+)(\/context)?$/);
     if (read) {
       const [, id, context] = read;
@@ -160,7 +208,12 @@ Bun.serve({
       case 'GET /api/v1/instance':
         return json({ uri: host, version: '4.3.0' });
       case 'GET /api/v2/instance':
-        return json({ title: TITLES[host], description: `${TITLES[host]}, served by the fixture.`, thumbnail: { url: '' } });
+        return json({
+          title: TITLES[host],
+          description: `${TITLES[host]}, served by the fixture.`,
+          thumbnail: { url: '' },
+          configuration: { statuses: { max_characters: 500, max_media_attachments: 4, characters_reserved_per_url: 23 } },
+        });
       case 'GET /api/v1/timelines/public':
         return json(firstPage ? [
           post('2', host),

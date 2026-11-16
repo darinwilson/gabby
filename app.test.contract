@@ -381,3 +381,210 @@ test "your own profile has no follow button"
   expect text "person-name" == "Darin"
   expect tree has "person-post-m1"
   expect tree missing "person-follow"
+
+test "signed in on a narrow window, the compose button posts to the home timeline"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "compose-fab"
+  clock settle
+  clock data
+  expect text "compose-title" == "New Post"
+  expect disabled "compose-post"
+  type "compose-text" "Hello from Gabby"
+  type "compose-visibility" "unlisted"
+  expect text "compose-left" == "484"
+  tap "compose-post"
+  clock data
+  clock data
+  clock settle
+  clock data
+  expect tree missing "compose-title"
+  expect text "text-new" == "Hello from Gabby"
+  expect text "timeline-title" == "Home"
+
+test "signed out, there's no compose button"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree missing "compose-fab"
+  expect tree missing "compose"
+
+test "a wide window keeps the post form in the sidebar"
+  size 1280x900
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  expect tree missing "compose-fab"
+  type "side-compose-text" "From the sidebar"
+  tap "side-compose-post"
+  clock data
+  clock data
+  clock settle
+  clock data
+  expect text "text-new" == "From the sidebar"
+  expect text "side-compose-text" == ""
+
+test "a photo is attached to a post, and can be removed"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "compose-fab"
+  clock settle
+  clock data
+  tap "compose-attach"
+  pick "compose-file" "assets/icon.png"
+  clock data
+  clock data
+  expect tree has "compose-media-m1"
+  tap "compose-remove-m1"
+  clock data
+  clock data
+  expect tree missing "compose-media-m1"
+  tap "compose-attach"
+  pick "compose-file" "assets/icon.png"
+  clock data
+  clock data
+  expect tree has "compose-media-m1"
+  tap "compose-post"
+  clock data
+  clock data
+  clock settle
+  clock data
+  expect tree missing "compose-title"
+  expect tree has "post-new"
+
+test "a very wide window keeps the timeline centered"
+  size 1400x900
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree has "centered-spacer"
+
+test "a post that can't reach the server says so"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "compose-fab"
+  clock settle
+  clock data
+  type "compose-text" "Hello"
+  fail fetch "http://127.0.0.1:4790/mastodon.art/api/v1/statuses"
+  tap "compose-post"
+  clock data
+  clock settle
+  expect text "compose-error" == "Couldn't reach the server. Check your connection and try again."
+  expect tree has "compose-title"
+
+test "the counter counts as Mastodon does, and a post over the limit can't be sent"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "compose-fab"
+  clock settle
+  clock data
+  type "compose-text" "See https://example.com/a/very/long/path/that/goes/on/and/on/for/quite/a/while/indeed"
+  clock data
+  expect text "compose-left" == "473"
+  type "compose-text" "👍🏽"
+  clock data
+  expect text "compose-left" == "499"
+  type "compose-text" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  clock data
+  expect text "compose-left" == "-1"
+  expect disabled "compose-post"
+
+test "a video waits for the server to process it, and can't be mixed with images"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "compose-fab"
+  clock settle
+  clock data
+  tap "compose-attach"
+  pick "compose-file" "fixture/media/clip.mp4"
+  clock data
+  clock settle
+  clock data
+  clock settle
+  clock data
+  expect tree has "compose-media-m1"
+  tap "compose-attach"
+  pick "compose-file" "assets/icon.png"
+  clock data
+  clock data
+  expect text "compose-upload-error" == "A post can have one video or audio file, or up to 4 images."
+  expect tree missing "compose-media-m2"
+  tap "compose-post"
+  clock data
+  clock data
+  clock settle
+  clock data
+  expect tree missing "compose-title"
+  expect tree has "post-new"
+
+test "picking more files than a post can have adds what fits, and Cancel discards them"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "compose-fab"
+  clock settle
+  clock data
+  tap "compose-attach"
+  pick "compose-file" "assets/icon.png" "assets/icon.png" "assets/icon.png" "assets/icon.png" "assets/icon.png"
+  clock data
+  clock data
+  expect tree has "compose-media-m4"
+  expect text "compose-upload-error" == "A post can have at most 4 files."
+  expect disabled "compose-attach"
+  tap "compose-remove-m4"
+  clock data
+  clock data
+  expect tree missing "compose-upload-error"
+  tap "compose-back"
+  clock data
+  clock settle
+  tap "compose-fab"
+  clock settle
+  clock data
+  expect tree missing "compose-media-m1"
