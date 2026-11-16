@@ -241,3 +241,75 @@ test "liking a post in a timeline doesn't open it"
   clock settle
   expect text "favourites-h1" == "2"
   expect tree missing "post-title"
+
+test "an avatar opens its profile, pinned posts first, and Back returns"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "avatar-2"
+  clock settle
+  clock data
+  expect text "person-title" == "Ada"
+  expect text "person-name" == "Ada"
+  expect text "person-handle" == "@ada@fosstodon.org"
+  expect text "person-statuses" == "2 posts"
+  expect text "person-following" == "45 following"
+  expect text "person-followers" == "120 followers"
+  expect text "field-name-Website" == "Website"
+  expect tree has "person-bio"
+  expect tree missing "person-banner"
+  expect tree missing "person-follow"
+  expect tree has "pinned-pinned-1"
+  expect text "pinned-text-1" == "An older public post"
+  expect tree has "person-post-2"
+  tap "person-back"
+  clock settle
+  expect tree missing "person-title"
+  expect text "timeline-title" == "Public"
+
+test "a post in a profile opens it"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "avatar-2"
+  clock settle
+  clock data
+  tap "person-open-2"
+  clock settle
+  clock data
+  expect text "post-title" == "Post"
+  expect text "thread-text-c1" == "A reply"
+
+test "an avatar in a post's view opens its profile"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "name-2"
+  clock settle
+  clock data
+  tap "thread-avatar-c1"
+  clock settle
+  clock data
+  expect text "person-name" == "Ada"
+
+test "signed in, a profile can be followed and unfollowed"
+  type "server" "mastodon.art"
+  tap "connect"
+  clock data
+  clock data
+  tap "log-in"
+  authorize
+  clock data
+  clock settle
+  clock data
+  tap "avatar-h1"
+  clock settle
+  clock data
+  expect text "person-follow" == "Follow"
+  tap "person-follow"
+  clock data
+  clock data
+  expect text "person-follow" == "Unfollow"
+  expect text "person-followers" == "121 followers"
+  tap "person-follow"
+  clock data
+  clock data
+  expect text "person-follow" == "Follow"
+  expect text "person-followers" == "120 followers"

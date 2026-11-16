@@ -9,7 +9,7 @@ const TITLES: Record<string, string> = {
   'hachyderm.io': 'Hachyderm',
 };
 const TOKEN = 'fixture-token';
-const ME = { username: 'darin', acct: 'darin', display_name: 'Darin', avatar: '' };
+const ME = { id: 'me', username: 'darin', acct: 'darin', display_name: 'Darin', avatar: '' };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -21,7 +21,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status, head
 // An hour before the tests' clock starts, so every post reads "1h".
 const POSTED = '2025-12-31T23:00:00.000Z';
 
-const status = (id: string, host: string, text: string, account = { username: 'ada', acct: `ada@${host}`, display_name: 'Ada', avatar: '' }) => ({
+const status = (id: string, host: string, text: string, account = { id: 'ada', username: 'ada', acct: `ada@${host}`, display_name: 'Ada', avatar: '' }) => ({
   id,
   created_at: POSTED,
   visibility: 'public',
@@ -36,7 +36,7 @@ const status = (id: string, host: string, text: string, account = { username: 'a
 });
 
 const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
-  ({ ...status(id, host, '', { username: 'grace', acct: `grace@${host}`, display_name: 'Grace', avatar: '' }), reblog: original });
+  ({ ...status(id, host, '', { id: 'grace', username: 'grace', acct: `grace@${host}`, display_name: 'Grace', avatar: '' }), reblog: original });
 
 // Posts a test can open, each with the post it replies to.
 const POSTS: Record<string, { text: (host: string) => string; parent?: string }> = {
@@ -53,6 +53,21 @@ const ancestors = (id: string): string[] => {
   return parent ? [...ancestors(parent), parent] : [];
 };
 const descendants = (id: string) => Object.keys(POSTS).filter((other) => ancestors(other).includes(id));
+
+// Ada's profile, as her own server describes her (so her acct has no domain).
+const ADA = (host: string) => ({
+  id: 'ada',
+  username: 'ada',
+  acct: 'ada',
+  display_name: 'Ada',
+  avatar: '',
+  header: `https://${host}/headers/original/missing.png`,
+  note: `<p>Writes about <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a></p>`,
+  fields: [{ name: 'Website', value: '<a href="https://ada.example" rel="me nofollow noopener noreferrer" target="_blank"><span class="invisible">https://</span><span class="">ada.example</span></a>' }],
+  followers_count: 120,
+  following_count: 45,
+  statuses_count: 2,
+});
 
 const authorized = (req: Request) => req.headers.get('Authorization') === `Bearer ${TOKEN}`;
 const unauthorized = () => json({ error: 'The access token is invalid' }, 401);
@@ -95,6 +110,22 @@ Bun.serve({
       if (!authorized(req)) return unauthorized();
       const response = await write(req, host, route);
       if (response) return response;
+    }
+    if (route === 'GET /api/v1/accounts/relationships') {
+      if (!authorized(req)) return unauthorized();
+      return json(url.searchParams.getAll('id[]').map((id) => ({ id, following: false, requested: false })));
+    }
+    const follow = route.match(/^POST \/api\/v1\/accounts\/([^/]+)\/(follow|unfollow)$/);
+    if (follow) {
+      if (!authorized(req)) return unauthorized();
+      return json({ id: follow[1], following: follow[2] === 'follow', requested: false });
+    }
+    const account = route.match(/^GET \/api\/v1\/accounts\/([^/]+)(\/statuses)?$/);
+    if (account && account[1] !== 'verify_credentials') {
+      if (account[1] !== 'ada') return json({ error: 'Record not found' }, 404);
+      if (!account[2]) return json(ADA(host));
+      if (url.searchParams.get('pinned') === 'true') return json([post('1', host)]);
+      return json(firstPage ? [post('2', host), post('1', host)] : []);
     }
     const read = route.match(/^GET \/api\/v1\/statuses\/([^/]+)(\/context)?$/);
     if (read) {
