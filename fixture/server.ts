@@ -128,6 +128,8 @@ async function write(req: Request, host: string, route: string) {
       visibility: body.visibility ?? 'public',
       in_reply_to_id: body.in_reply_to_id ?? null,
       replies_count: 0,
+      reblogs_count: 0,
+      favourites_count: 0,
       media_attachments: media,
     });
   }
