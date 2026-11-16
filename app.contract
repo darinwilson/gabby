@@ -95,6 +95,11 @@ shape Outcome
   ok: bool
   error: string
 
+shape Count
+  text: string
+  left: number
+  media: number
+
 shape Server
   host: string
 
@@ -141,6 +146,7 @@ component Gabby
   resource timeline = loadTimeline(host, home, tag) when host != "" as shape Timeline else empty() transient
   mutation more as shape Reply refreshes timeline
   mutation acted as shape Reply refreshes timeline
+  mutation discarded as shape Outcome
   derive loading = pending(timeline) or pending(more)
   derive posts = timeline.host == host and timeline.home == home and timeline.tag == tag ? timeline.posts : []
   resource viewport = exactViewport() as shape Viewport
@@ -200,6 +206,9 @@ component Gabby
   action composed
     nav = back(nav)
     refresh timeline
+  action cancelCompose(h: string)
+    send discarded = discardDraft(h)
+    nav = back(nav)
   action favourite(p: Post)
     if timeline.signedIn and not pending(acted)
       send acted = act(host, p.statusId, p.favourited ? "unfavourite" : "favourite")
@@ -294,19 +303,18 @@ component Gabby
                     estimated-item-height=120 reachend=loadMore reach-margin="100%" padding-bottom=(not wide and timeline.signedIn ? 96 : 0)
                     for p in rows key=p.id
                       PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, profile=openAccount, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+              if centered and instance.domain == host
+                column width="calc(50% - 300px)" flex-shrink=0 testId="centered-spacer"
             if not wide and timeline.signedIn and timeline.host == host
               button press=compose aria-label="New post" appearance="none" background-color="-exact-label" color="-exact-background" position="absolute" right=16 bottom=24
                 width=56 height=56 border-radius=28 padding=0 box-shadow="0 2px 8px rgba(0, 0, 0, 0.3)" testId="compose-fab"
                 image "symbol:compose" font-size="min(-exact-title3, 28px)"
-
-              if centered and instance.domain == host
-                column width="calc(50% - 300px)" flex-shrink=0
         if e.name == "post"
           PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, back=back, show=showPost, person=showAccount, openTag=openTag, changed=postChanged)
         if e.name == "compose"
           column navigationKey=`${e.id}` navigationScroll="compose" position="absolute" inset=0 display="flex" flex-direction="column"
             header
-              button id="back" press=back testId="compose-back"
+              button id="back" press=cancelCompose(e.params.host) testId="compose-back"
                 text "Cancel"
               text "New Post" role="heading" aria-level=2 testId="compose-title"
             column flex=1 min-height=0 overflow-y="auto" padding=16 width="100%" max-width="37.5rem" margin-left="auto" margin-right="auto" box-sizing="border-box"
@@ -479,13 +487,16 @@ component Composer
   state text = ""
   state visibility = "public"
   resource attached = draftMedia(host) as shape Attachment[] else empty() transient
-  mutation uploaded as shape Outcome refreshes attached
+  resource counted = composeLimits(host, text) as shape Count else empty()
+  state uploadError = ""
+  mutation uploaded as shape Outcome refreshes attached then afterUpload
   mutation removed as shape Outcome refreshes attached
   mutation posted as shape Outcome refreshes attached then afterPost
-  derive left = 500 - text.length
+  // Until the count for this text arrives, a plain count stands in.
+  derive left = counted.text == text ? counted.left : 500 - text.length
+  derive maxMedia = counted.media > 0 ? counted.media : 4
   derive busy = pending(uploaded) or pending(posted)
   derive canPost = (text.trim() != "" or attached.length > 0) and left >= 0 and not busy
-  derive uploadError = match uploaded { case some(o) => o.error, case none => "" }
   derive postError = match posted { case some(o) => o.error, case none => "" }
   derive postOk = match posted { case some(o) => o.ok, case none => false }
 
@@ -498,7 +509,10 @@ component Composer
   action picked(files: Picked[])
     if files.length > 0 and not busy
       send uploaded = uploadMedia(host, files)
+  action afterUpload
+    uploadError = match uploaded { case some(o) => o.error, case none => "" }
   action remove(a: Attachment)
+    uploadError = ""
     send removed = dropMedia(host, a.id)
   action submit
     if canPost
@@ -506,6 +520,7 @@ component Composer
   action afterPost
     if postOk
       text = ""
+      uploadError = ""
       visibility = "public"
       done()
 
@@ -520,16 +535,16 @@ component Composer
                 image a.preview width=72 height=72 object-fit="cover" alt=a.name
               else
                 image (a.kind == "audio" ? "symbol:waveform" : a.kind == "video" ? "symbol:play" : "symbol:document") aria-label=a.name
-              button press=remove(a) aria-label=`Remove ${a.name}` appearance="none" position="absolute" top=2 right=2 width=24 height=24 border-radius=12 padding=0
+              button press=remove(a) disabled=busy aria-label=`Remove ${a.name}` appearance="none" position="absolute" top=2 right=2 width=24 height=24 border-radius=12 padding=0
                 background-color="-exact-secondary-background" color="-exact-label" testId=`${prefix}compose-remove-${a.id}`
                 image "symbol:close"
       if uploadError != ""
-        text uploadError color="-exact-system-red" testId=`${prefix}compose-upload-error`
+        text uploadError color="-exact-system-red" role="alert" testId=`${prefix}compose-upload-error`
       if postError != ""
-        text postError color="-exact-system-red" testId=`${prefix}compose-error`
+        text postError color="-exact-system-red" role="alert" testId=`${prefix}compose-error`
       row gap=8 align-items="center"
         input type="file" id=`${prefix}compose-file` multiple=true change=picked display="none" aria-hidden=true testId=`${prefix}compose-file`
-        button press=attach disabled=(attached.length >= 4 or busy) aria-label="Add photos, video or audio" buttonStyle="bordered" testId=`${prefix}compose-attach`
+        button press=attach disabled=(attached.length >= maxMedia or busy) aria-label="Add photos, video or audio" buttonStyle="bordered" testId=`${prefix}compose-attach`
           image "symbol:photo"
         select value=visibility change=setVisibility aria-label="Who can see this" flex=1 min-width=0 testId=`${prefix}compose-visibility`
           option "Public" value="public"

@@ -438,72 +438,176 @@ async function setFollow(host: string, id: string, follow: boolean, store: Store
 }
 
 type Attachment = Result<'draftMedia'>[number];
-type Picked = { path: string; name: string; type: string };
+type Picked = { path: string; name: string; type: string; size: number };
 
 // Files uploaded for the post being written on each server, sent with it.
 const drafts = new Map<string, Attachment[]>();
-const MAX_MEDIA = 4;
+// One Idempotency-Key per draft, so a post retried after a lost reply is made once.
+const postKeys = new Map<string, string>();
 let uploads = 0;
 
 const utf8 = (text: string) => new TextEncoder().encode(text);
+// storage.fs.readFile reads at most 16 MiB (Exact reference.md, fs).
+const MAX_READ = 16 * 1024 * 1024;
+const EXTENSION_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', avif: 'image/avif',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', flac: 'audio/flac', opus: 'audio/opus',
+};
+const typeOf = (file: Picked) => file.type || EXTENSION_TYPES[file.name.split('.').pop()?.toLowerCase() ?? ''] || 'application/octet-stream';
+// Mastodon takes one video or audio file, or images only.
+const playable = (type: string) => /^(video|audio)\//.test(type) || type === 'image/gif';
+
+type Limits = { characters: number; media: number; urlLength: number };
+const limits = new Map<string, Limits>();
+
+async function limitsFor(host: string): Promise<Limits> {
+  const kept = limits.get(host);
+  if (kept) return kept;
+  const response = await fetch(`${base(host)}/api/v2/instance`, { exactTimeout: TIMEOUT }).catch(() => null);
+  const body = response?.ok
+    ? ((await response.json().catch(() => ({}))) as { configuration?: { statuses?: { max_characters?: number; max_media_attachments?: number; characters_reserved_per_url?: number } } })
+    : {};
+  const statuses = body.configuration?.statuses ?? {};
+  const found = { characters: statuses.max_characters ?? 500, media: statuses.max_media_attachments ?? 4, urlLength: statuses.characters_reserved_per_url ?? 23 };
+  if (response?.ok) limits.set(host, found);
+  return found;
+}
+
+// Counts as Mastodon does: a link is urlLength characters, a mention counts only its
+// username, and a character is a user-perceived one (Intl.Segmenter is not on every host).
+function charactersIn(text: string, urlLength: number): number {
+  const counted = text
+    .replace(/https?:\/\/[^\s<>"]+/g, 'x'.repeat(urlLength))
+    .replace(/(^|[^\w/])@(\w+)@[\w.-]+\w/g, '$1@$2');
+  let count = 0;
+  let joined = false;
+  let flags = 0;
+  for (const ch of counted) {
+    const c = ch.codePointAt(0)!;
+    const extends_ = (c >= 0x300 && c <= 0x36f) || (c >= 0xfe00 && c <= 0xfe0f) || (c >= 0x1f3fb && c <= 0x1f3ff) || (c >= 0xe0020 && c <= 0xe007f) || c === 0x20e3;
+    if (c === 0x200d) { joined = true; continue; }
+    if (extends_ || joined) { joined = false; continue; }
+    if (c >= 0x1f1e6 && c <= 0x1f1ff) { if (flags++ % 2 === 1) continue; } else flags = 0;
+    count++;
+  }
+  return count;
+}
+
+async function composeLimits(host: string, text: string): Promise<Result<'composeLimits'>> {
+  const found = await limitsFor(host);
+  return { text, left: found.characters - charactersIn(text, found.urlLength), media: found.media };
+}
 
 // Mastodon takes media only as multipart/form-data (POST /api/v2/media).
 async function uploadOne(host: string, file: Picked, store: Store, storage: Storage): Promise<Attachment> {
   const bytes = new Uint8Array(await storage.fs.readFile(file.path));
-  const boundary = `----GabbyFormBoundary${++uploads}x9Qf3LzT7hKp2Wd`;
+  const boundary = `----GabbyFormBoundary${++uploads}${crypto.randomUUID().replace(/-/g, '')}`;
   const name = file.name.replace(/["\r\n\\]/g, '_');
-  const head = utf8(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`);
+  const head = utf8(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: ${typeOf(file)}\r\n\r\n`);
   const tail = utf8(`\r\n--${boundary}--\r\n`);
   const body = new Uint8Array(head.length + bytes.length + tail.length);
   body.set(head);
   body.set(bytes, head.length);
   body.set(tail, head.length + bytes.length);
-  const response = await (await providerFor(host, store)).fetch(store, `${base(host)}/api/v2/media`, {
+  const provider = await providerFor(host, store);
+  const response = await provider.fetch(store, `${base(host)}/api/v2/media`, {
     method: 'POST',
     headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
     body,
   });
   if (response.status === 413) throw failure('too-large');
-  if (!response.ok) throw failure((await response.json().catch(() => ({}))).error ?? 'http');
-  const media = (await response.json()) as { id: string; type: string; preview_url: string | null };
-  return { id: media.id, kind: media.type, preview: media.preview_url ?? '', name: file.name };
+  if (response.status === 429) throw failure('rate-limited');
+  if (!response.ok) throw Object.assign(failure('http'), { detail: (await response.json().catch(() => ({}))).error ?? '' });
+  let media = (await response.json()) as { id: string; type: string; url: string | null; preview_url: string | null };
+  // 202: the server is still processing it (video, audio, GIF), and a post can't use it until it is done.
+  for (let wait = 1000; response.status === 202 && !media.url; wait = Math.min(wait * 2, 5000)) {
+    await new Promise((r) => setTimeout(r, wait));
+    const check = await provider.fetch(store, `${base(host)}/api/v1/media/${encodeURIComponent(media.id)}`);
+    if (check.status === 206) continue;
+    if (!check.ok) throw failure('http');
+    media = await check.json();
+  }
+  return { id: media.id, kind: media.type, preview: media.type === 'image' || media.type === 'gifv' ? (media.preview_url ?? '') : '', name: file.name };
 }
 
 async function uploadMedia(host: string, files: Picked[], store: Store, storage: Storage): Promise<Result<'uploadMedia'>> {
-  const list = drafts.get(host) ?? [];
-  const room = MAX_MEDIA - list.length;
+  const { media: max } = await limitsFor(host);
+  const kept = drafts.get(host) ?? [];
+  const room = max - kept.length;
+  const chosen = files.slice(0, room);
+  const kinds = [...kept.map((a) => (a.kind === 'image' ? 'image/' : `${a.kind}/`)), ...chosen.map(typeOf)];
+  if (kinds.some(playable) && kinds.length > 1) return { ok: false, error: 'A post can have one video or audio file, or up to 4 images.' };
+  const large = chosen.find((file) => file.size > MAX_READ);
+  if (large) return { ok: false, error: `${large.name} is over 16 MB, the largest file Gabby can upload.` };
   try {
-    for (const file of files.slice(0, room)) {
-      list.push(await uploadOne(host, file, store, storage));
-      drafts.set(host, list);
+    for (const file of chosen) {
+      const added = await uploadOne(host, file, store, storage);
+      drafts.set(host, [...(drafts.get(host) ?? []), added]);
     }
   } catch (error) {
-    const reason = (error as { reason?: string }).reason;
-    return { ok: false, error: reason === 'too-large' ? 'That file is too large for this server.' : "Couldn't add the file." };
+    const { reason, detail, signedOut } = error as { reason?: string; detail?: string; signedOut?: boolean };
+    return {
+      ok: false,
+      error: reason === 'too-large' ? 'That file is too large for this server.'
+        : reason === 'rate-limited' ? 'This server is taking no more uploads for now. Try again in a few minutes.'
+        : signedOut ? 'Log in again to add files.'
+        : detail ? `Couldn't add the file: ${detail}` : "Couldn't add the file.",
+    };
   }
   return files.length > room
-    ? { ok: false, error: `A post can have at most ${MAX_MEDIA} files.` }
+    ? { ok: false, error: `A post can have at most ${max} files.` }
     : { ok: true, error: '' };
 }
 
-function dropMedia(host: string, id: string): Result<'dropMedia'> {
+// Mastodon 4.4 and later delete unattached media on request; an older server keeps it a day.
+async function forget(host: string, ids: string[], store: Store) {
+  const provider = await providerFor(host, store).catch(() => null);
+  for (const id of ids) {
+    await provider?.fetch(store, `${base(host)}/api/v1/media/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null);
+  }
+}
+
+async function dropMedia(host: string, id: string, store: Store): Promise<Result<'dropMedia'>> {
   drafts.set(host, (drafts.get(host) ?? []).filter((a) => a.id !== id));
+  await forget(host, [id], store);
+  return { ok: true, error: '' };
+}
+
+async function discardDraft(host: string, store: Store): Promise<Result<'discardDraft'>> {
+  const ids = (drafts.get(host) ?? []).map((a) => a.id);
+  drafts.delete(host);
+  postKeys.delete(host);
+  await forget(host, ids, store);
   return { ok: true, error: '' };
 }
 
 async function publish(host: string, text: string, visibility: string, store: Store): Promise<Result<'publish'>> {
   const media = drafts.get(host) ?? [];
-  const response = await (await providerFor(host, store)).fetch(store, `${base(host)}/api/v1/statuses`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: text, visibility, media_ids: media.map((a) => a.id) }),
-  });
+  const key = postKeys.get(host) ?? crypto.randomUUID();
+  postKeys.set(host, key);
+  let response: Response;
+  try {
+    response = await (await providerFor(host, store)).fetch(store, `${base(host)}/api/v1/statuses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+      body: JSON.stringify({ status: text, visibility, media_ids: media.map((a) => a.id) }),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: (error as { signedOut?: boolean }).signedOut
+        ? 'Log in again to post.'
+        : "Couldn't reach the server. Check your connection and try again.",
+    };
+  }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     return { ok: false, error: body.error ? `Couldn't post: ${body.error}` : "Couldn't post." };
   }
   const status = (await response.json()) as Status;
   drafts.delete(host);
+  postKeys.delete(host);
   // Home timelines are read once, so the new post goes on top of the one kept.
   const home = feeds.get(JSON.stringify([host, true, '']));
   if (home && home.posts.length > 0) home.posts = [toPost(status, host), ...home.posts];
@@ -560,7 +664,9 @@ const sources: Sources = {
   loadPerson: ([host, id], store) => loadPerson(host, id, store),
   draftMedia: ([host]) => [...(drafts.get(host) ?? [])],
   uploadMedia: ([host, files], store, storage) => uploadMedia(host, files, store, storage),
-  dropMedia: ([host, id]) => dropMedia(host, id),
+  dropMedia: ([host, id], store) => dropMedia(host, id, store),
+  discardDraft: ([host], store) => discardDraft(host, store),
+  composeLimits: ([host, text]) => composeLimits(host, text),
   publish: ([host, text, visibility], store) => publish(host, text, visibility, store),
   morePosts: ([host, id], store) => morePosts(host, id, store),
   setFollow: ([host, id, follow], store) => setFollow(host, id, follow, store),
