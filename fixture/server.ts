@@ -38,6 +38,21 @@ const status = (id: string, host: string, text: string, account = { username: 'a
 const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
   ({ ...status(id, host, '', { username: 'grace', acct: `grace@${host}`, display_name: 'Grace', avatar: '' }), reblog: original });
 
+// Posts a test can open, each with the post it replies to.
+const POSTS: Record<string, { text: (host: string) => string; parent?: string }> = {
+  '1': { text: () => 'An older public post' },
+  '2': { text: (host) => `A public post <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a>` },
+  'c1': { text: () => 'A reply', parent: '2' },
+  'c2': { text: () => 'A reply to the reply', parent: 'c1' },
+  'h1': { text: () => 'A post from someone you follow' },
+};
+const post = (id: string, host: string) => status(id, host, POSTS[id].text(host));
+const ancestors = (id: string): string[] => {
+  const parent = POSTS[id].parent;
+  return parent ? [...ancestors(parent), parent] : [];
+};
+const descendants = (id: string) => Object.keys(POSTS).filter((other) => ancestors(other).includes(id));
+
 const authorized = (req: Request) => req.headers.get('Authorization') === `Bearer ${TOKEN}`;
 const unauthorized = () => json({ error: 'The access token is invalid' }, 401);
 
@@ -80,6 +95,14 @@ Bun.serve({
       const response = await write(req, host, route);
       if (response) return response;
     }
+    const read = route.match(/^GET \/api\/v1\/statuses\/([^/]+)(\/context)?$/);
+    if (read) {
+      const [, id, context] = read;
+      if (!(id in POSTS)) return json({ error: 'Record not found' }, 404);
+      return json(context
+        ? { ancestors: ancestors(id).map((a) => post(a, host)), descendants: descendants(id).map((d) => post(d, host)) }
+        : post(id, host));
+    }
     switch (route) {
       case 'GET /api/v1/instance':
         return json({ uri: host, version: '4.3.0' });
@@ -87,15 +110,15 @@ Bun.serve({
         return json({ title: TITLES[host], description: `${TITLES[host]}, served by the fixture.`, thumbnail: { url: '' } });
       case 'GET /api/v1/timelines/public':
         return json(firstPage ? [
-          status('2', host, `A public post <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a>`),
-          status('1', host, 'An older public post'),
+          post('2', host),
+          post('1', host),
         ] : []);
       case 'GET /api/v1/timelines/tag/birds':
         return json(firstPage ? [status('t1', host, 'A post about birds')] : []);
       case 'GET /api/v1/timelines/home':
         if (!authorized(req)) return unauthorized();
         return json(firstPage ? [
-          status('h1', host, 'A post from someone you follow'),
+          post('h1', host),
           boost('h2', host, status('b1', host, 'A post someone you follow boosted')),
         ] : []);
       case 'GET /api/v1/accounts/verify_credentials':

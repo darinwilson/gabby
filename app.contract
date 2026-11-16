@@ -37,6 +37,14 @@ shape Timeline
 shape Reply
   ok: bool
 
+shape Thread
+  host: string
+  id: string
+  ancestors: Post[]
+  post: Post
+  replies: Post[]
+  signedIn: bool
+
 shape Account
   host: string
   supported: bool
@@ -66,6 +74,7 @@ routes nav
     timeline "/timeline/:host"
     feed "/feed/:host"
     tag "/tag/:host/:tag"
+    post "/post/:host/:id"
 
 component Gabby
   state draft = "" persist
@@ -82,10 +91,13 @@ component Gabby
   derive signInError = match signedIn { case some(r) => (r.ok or r.code == "cancelled" ? "" : r.error), case none => "" }
   derive accountError = accountReady ? (account.error != "" ? account.error : signInError) : ""
   derive optionsHint = accountError != "" ? accountError : (accountReady and not account.supported ? `You can't log in to ${server} from Gabby. Login works with fosstodon.org, mastodon.social and mastodon.art.` : "")
-  derive home = top(nav).name == "feed"
+  // The timeline nearest the top, which stays loaded and scrolled under a post opened from it.
+  derive timelines = stack(nav).filter(e => e.name == "timeline" or e.name == "feed" or e.name == "tag")
+  derive shown = match timelines.at(-1) { case some(e) => e, case none => top(nav) }
+  derive home = shown.name == "feed"
   derive inFeed = stack(nav).map(e => e.name == "feed").includes(true)
-  derive tag = top(nav).name == "tag" ? top(nav).params.tag : ""
-  derive host = top(nav).name == "timeline" or home or tag != "" ? top(nav).params.host : ""
+  derive tag = shown.name == "tag" ? shown.params.tag : ""
+  derive host = shown.name == "timeline" or home or tag != "" ? shown.params.host : ""
   resource timeline = loadTimeline(host, home, tag) when host != "" as shape Timeline else empty() transient
   mutation more as shape Reply refreshes timeline
   mutation acted as shape Reply refreshes timeline
@@ -131,6 +143,13 @@ component Gabby
     nav = go(nav, url)
   action openTag(e: AtomEvent)
     nav = go(nav, e.href.slice(4))
+  action openPost(p: Post)
+    if p.statusId != ""
+      nav = push(nav, path("post", host, p.statusId))
+  action showPost(h: string, id: string)
+    nav = push(nav, path("post", h, id))
+  action postChanged
+    refresh timeline
   action favourite(p: Post)
     if timeline.signedIn and not pending(acted)
       send acted = act(host, p.statusId, p.favourited ? "unfavourite" : "favourite")
@@ -222,40 +241,124 @@ component Gabby
                   list id="posts" testId="posts" virtualized=true appearance="none" flex=1 min-height=0
                     estimated-item-height=120 reachend=loadMore reach-margin="100%"
                     for p in rows key=p.id
-                      row gap=12 padding=(wide ? 16 : 12) align-items="flex-start" width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto"
-                        border-style="solid" border-color="-exact-separator" border-width=(wide ? "0 1px 1px" : "0 0 1px")
-                        if p.id == "loading"
-                          progress aria-label="Loading" testId="loading"
-                        else
-                          image p.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
-                          column flex=1 min-width=0 gap=2
-                            if p.boostedBy != ""
-                              row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2
-                                image "symbol:repeat" aria-hidden=true
-                                if p.boostedAvatar != ""
-                                  image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
-                                text `${p.boostedBy} boosted` testId=`boosted-${p.id}`
-                            row gap=6 align-items="center" flex-wrap="wrap"
-                              text p.name flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`name-${p.id}`
-                              image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
-                                aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
-                                font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`visibility-${p.id}`
-                              text "·" font="-exact-footnote" color="-exact-secondary-label" aria-hidden=true
-                              time datetime=p.posted format="relative" max-width="100%" font="-exact-footnote" color="-exact-secondary-label" testId=`time-${p.id}`
-                            text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
-                            text p.text markup="markdown" atoms="hashtag" atompress=openTag overflow-wrap="break-word" margin-top=4 testId=`text-${p.id}`
-                            row gap=16 margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
-                              button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" min-width=44 min-height=44 testId=`reply-${p.id}`
-                                image "symbol:reply" aria-hidden=true
-                                text (p.replies > 0 ? `${p.replies}` : "") testId=`replies-${p.id}`
-                              button appearance="none" press=boost(p) disabled=(not timeline.signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost") aria-pressed=p.reblogged
-                                display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`boost-${p.id}`
-                                image "symbol:repeat" aria-hidden=true
-                                text (p.reblogs > 0 ? `${p.reblogs}` : "") testId=`reblogs-${p.id}`
-                              button appearance="none" press=favourite(p) disabled=(not timeline.signedIn) aria-label=(p.favourited ? "Unlike" : "Like") aria-pressed=p.favourited
-                                display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`favourite-${p.id}`
-                                image (p.favourited ? "symbol:star-fill" : "symbol:star") aria-hidden=true
-                                text (p.favourites > 0 ? `${p.favourites}` : "") testId=`favourites-${p.id}`
+                      PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, boost=boost, favourite=favourite, openTag=openTag, focused=false)
 
               if centered and instance.domain == host
                 column width="calc(50% - 300px)" flex-shrink=0
+        if e.name == "post"
+          PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, back=back, show=showPost, openTag=openTag, changed=postChanged)
+
+// A post and the posts around it: what it replies to above, its replies below.
+component PostView
+  props
+    route: string
+    host: string
+    id: string
+    wide: bool
+    back: action
+    show: action
+    openTag: action
+    changed: action
+  resource thread = loadThread(host, id) as shape Thread else empty() transient
+  mutation acted as shape Reply refreshes thread then afterAct
+  derive ready = thread.host == host and thread.id == id
+  derive error = match failure(thread) { case some(f) => (f.code == "not-found" ? "This post isn't available." : f.code == "auth-required" ? "This server only shows posts to signed-in users." : "Couldn't load the post."), case none => "" }
+
+  action open(p: Post)
+    if p.statusId != id
+      show(host, p.statusId)
+  action afterAct
+    changed()
+  action favourite(p: Post)
+    if thread.signedIn and not pending(acted)
+      send acted = act(host, p.statusId, p.favourited ? "unfavourite" : "favourite")
+  action boost(p: Post)
+    if thread.signedIn and not pending(acted)
+      send acted = act(host, p.statusId, p.reblogged ? "unreblog" : "reblog")
+  action retry
+    refresh thread
+
+  view
+    column navigationKey=route navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction="column"
+      header
+        button id="back" press=back testId="post-back"
+          text "Back"
+        text "Post" role="heading" aria-level=2 testId="post-title"
+      if error != "" and not ready
+        column padding=16 gap=12 align-items="center"
+          text error text-align="center" testId="thread-error"
+          button press=retry buttonStyle="bordered" testId="thread-retry"
+            text "Try Again"
+      else if not ready
+        column padding=16 align-items="center"
+          progress aria-label="Loading" testId="thread-loading"
+      else
+        list id="thread" testId="thread" appearance="none" flex=1 min-height=0
+          for p in thread.ancestors key=p.id
+            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+          PostRow(p=thread.post, wide=wide, signedIn=thread.signedIn, prefix="focus-", focused=true, open=open, boost=boost, favourite=favourite, openTag=openTag)
+          for p in thread.replies key=p.id
+            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+
+// One post in a list. Tapping it opens the post; its buttons and hashtags do their own thing.
+component PostRow
+  // A hashtag's press also reaches the row's; the row skips the press that opened a hashtag.
+  state tagged = false
+  action down
+    tagged = false
+  action tag(e: AtomEvent)
+    tagged = true
+    openTag(e)
+  action pressed
+    if not tagged
+      open(p)
+  props
+    p: Post
+    wide: bool
+    signedIn: bool
+    prefix: string
+    focused: bool
+    open: action
+    boost: action
+    favourite: action
+    openTag: action
+  view
+    row press=pressed pointerdown=down gap=12 padding=(wide ? 16 : 12) align-items="flex-start" width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto"
+      border-style="solid" border-color="-exact-separator" border-width=(wide ? "0 1px 1px" : "0 0 1px") testId=`${prefix}post-${p.id}`
+      if p.id == "loading"
+        progress aria-label="Loading" testId="loading"
+      else
+        image p.avatar width=44 height=44 border-radius=22 object-fit="cover" alt=""
+        column flex=1 min-width=0 gap=2
+          if p.boostedBy != ""
+            row gap=6 align-items="center" font="-exact-footnote" color="-exact-secondary-label" margin-bottom=2
+              image "symbol:repeat" aria-hidden=true
+              if p.boostedAvatar != ""
+                image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
+              text `${p.boostedBy} boosted` testId=`${prefix}boosted-${p.id}`
+          row gap=6 align-items="center" flex-wrap="wrap"
+            text p.name flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
+            image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
+              aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
+              font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
+            if not focused
+              text "·" font="-exact-footnote" color="-exact-secondary-label" aria-hidden=true
+              time datetime=p.posted format="relative" max-width="100%" font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}time-${p.id}`
+          text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
+          text p.text markup="markdown" atoms="hashtag" atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
+          if focused
+            row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
+              time datetime=p.posted format="date-medium"
+              time datetime=p.posted format="time-short"
+          row gap=16 margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
+            button appearance="none" disabled=true aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
+              image "symbol:reply" aria-hidden=true
+              text (p.replies > 0 ? `${p.replies}` : "") testId=`${prefix}replies-${p.id}`
+            button appearance="none" press=boost(p) disabled=(not signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost") aria-pressed=p.reblogged
+              display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`${prefix}boost-${p.id}`
+              image "symbol:repeat" aria-hidden=true
+              text (p.reblogs > 0 ? `${p.reblogs}` : "") testId=`${prefix}reblogs-${p.id}`
+            button appearance="none" press=favourite(p) disabled=(not signedIn) aria-label=(p.favourited ? "Unlike" : "Like") aria-pressed=p.favourited
+              display="flex" gap=4 align-items="center" min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`${prefix}favourite-${p.id}`
+              image (p.favourited ? "symbol:star-fill" : "symbol:star") aria-hidden=true
+              text (p.favourites > 0 ? `${p.favourites}` : "") testId=`${prefix}favourites-${p.id}`
