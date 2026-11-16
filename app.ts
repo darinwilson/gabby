@@ -240,7 +240,14 @@ type Status = {
   reblog: Status | null;
   sensitive?: boolean;
   media_attachments?: MediaJson[];
-  card?: { url: string; title: string; description: string; image: string | null; provider_name: string } | null;
+  card?: {
+    url: string;
+    title: string | null;
+    description: string | null;
+    image: string | null;
+    image_description?: string | null;
+    provider_name: string | null;
+  } | null;
 };
 
 type MediaJson = {
@@ -250,15 +257,16 @@ type MediaJson = {
   preview_url: string | null;
   remote_url?: string | null;
   description: string | null;
-  meta?: { original?: { width?: number; height?: number; aspect?: number } } | null;
+  meta?: { [size in 'original' | 'small']?: { width?: number; height?: number; aspect?: number } } | null;
 };
 
 const MEDIA_KINDS = ['image', 'video', 'gifv', 'audio'];
 const web = (url: string | null | undefined) => (url && /^https?:\/\//i.test(url) ? url : '');
 
 function toMedia(m: MediaJson): Post['media'][number] {
-  const original = m.meta?.original;
-  const ratio = original?.aspect ?? (original?.width && original?.height ? original.width / original.height : 0);
+  const size = (s?: { width?: number; height?: number; aspect?: number }) =>
+    s?.aspect ?? (s?.width && s?.height ? s.width / s.height : 0);
+  const ratio = size(m.meta?.original) || size(m.meta?.small);
   // An attachment the server couldn't fetch from another server is "unknown"; its link is the original.
   const kind = MEDIA_KINDS.includes(m.type) && web(m.url) ? m.type : 'unknown';
   return {
@@ -273,12 +281,13 @@ function toMedia(m: MediaJson): Post['media'][number] {
 
 function toCard(card: Status['card']): Post['card'] {
   const url = web(card?.url);
-  if (!card || !url) return { url: '', title: '', description: '', image: '', provider: '' };
+  if (!card || !url || !URL.canParse(url)) return { url: '', title: '', description: '', image: '', alt: '', provider: '' };
   return {
     url,
     title: card.title || url,
-    description: card.description,
+    description: card.description ?? '',
     image: web(card.image),
+    alt: card.image_description ?? '',
     provider: card.provider_name || new URL(url).hostname,
   };
 }

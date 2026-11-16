@@ -722,7 +722,7 @@ test "a reply to a reply shows in the thread it was written from"
   expect text "thread-text-new" == "Agreed"
   expect text "thread-replies-c1" == "11"
 
-test "pictures show in the timeline, each with its description"
+test "a post's pictures show in the timeline, and not its link preview"
   at "/timeline/fosstodon.org"
   clock data
   expect tree has "media-p3"
@@ -763,3 +763,48 @@ test "a post's view shows its media too"
   clock data
   expect text "post-title" == "Post"
   expect tree has "focus-image-p3-g1"
+
+test "a GIF plays in the timeline"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree has "video-f1-f1"
+
+test "a file the server couldn't show links to the original, and one still processing is left out"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "posts" into "u1"
+  clock settle
+  expect tree has "file-u1-u1"
+  expect tree missing "image-u1-u2"
+
+test "a link preview with missing details falls back to the address"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "posts" into "x1"
+  clock settle
+  expect text "card-title-x1" == "https://example.com/bare"
+  expect text "card-provider-x1" == "example.com"
+  expect tree missing "card-description-x1"
+  tap "posts" into "x2"
+  clock settle
+  expect tree has "text-x2"
+  expect tree missing "card-x2"
+
+test "a sensitive post's link preview leaves out its picture"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "posts" into "s2"
+  clock settle
+  expect tree has "card-s2"
+  expect tree missing "card-image-s2"
+  tap "posts" into "k1"
+  clock settle
+  expect tree has "card-image-k1"
+
+test "a boost shows the boosted post's pictures"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "posts" into "bp3"
+  clock settle
+  expect tree has "image-bp3-g1"
+  expect tree has "image-bp3-g2"

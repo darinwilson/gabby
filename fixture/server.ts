@@ -72,7 +72,23 @@ const POSTS: Record<string, Spec> = {
   'b1': { text: () => 'A post someone you follow boosted' },
   'l1': { text: () => 'A post from a locked account', by: LIN, visibility: 'private' },
   'm1': { text: () => 'A post of your own', by: () => ME },
-  'p3': { text: () => 'Two pictures', media: (host) => [FILE(host, 'g1', 'image', 'jpg', 'A test pattern in bright colours'), FILE(host, 'g2', 'image', 'jpg')] },
+  'p3': {
+    text: () => 'Two pictures',
+    media: (host) => [FILE(host, 'g1', 'image', 'jpg', 'A test pattern in bright colours'), FILE(host, 'g2', 'image', 'jpg')],
+    card: () => ({ url: 'https://example.com/pictures', title: 'Pictures', description: '', image: null, provider_name: 'Example' }),
+  },
+  'f1': { text: () => 'A GIF', media: (host) => [FILE(host, 'f1', 'gifv', 'mp4', null, 320, 180)] },
+  // A remote file the server didn't fetch, and an upload still processing.
+  'u1': {
+    text: () => 'A file from another server',
+    media: (host) => [
+      { ...FILE(host, 'u1', 'unknown', 'jpg'), url: null, preview_url: null, remote_url: 'https://elsewhere.example/files/u1.tiff', meta: null },
+      { ...FILE(host, 'u2', 'image', 'jpg'), url: null },
+    ],
+  },
+  // Cards as other fediverse servers send them: null fields, and a URL that doesn't parse.
+  'x1': { text: () => 'A bare link', card: () => ({ url: 'https://example.com/bare', title: null, description: null, image: null, provider_name: '' }) },
+  'x2': { text: () => 'A broken link', card: () => ({ url: 'https://', title: 'Broken', description: '', image: null, provider_name: '' }) },
   'v1': { text: () => 'A video', media: (host) => [FILE(host, 'v1', 'video', 'mp4', 'A test pattern that moves', 320, 180)] },
   'a1': { text: () => 'A sound', media: (host) => [{ ...FILE(host, 'a1', 'audio', 'm4a', 'A 440 Hz tone'), meta: null }] },
   'k1': {
@@ -86,6 +102,11 @@ const POSTS: Record<string, Spec> = {
     }),
   },
   's1': { text: () => 'A picture marked sensitive', sensitive: true, media: (host) => [FILE(host, 's1', 'image', 'jpg', 'A test pattern')] },
+  's2': {
+    text: () => 'A sensitive link',
+    sensitive: true,
+    card: (host) => ({ url: 'https://example.com/s2', title: 'Sensitive', description: '', image: `http://127.0.0.1:${port}/${host}/media/card.jpg`, provider_name: 'Example' }),
+  },
 };
 const post = (id: string, host: string) => ({
   ...status(id, host, POSTS[id].text(host), POSTS[id].by?.(host)),
@@ -247,8 +268,8 @@ Bun.serve({
       return json(MEDIA(media[2], host, kept.type));
     }
     if (route.startsWith('GET /media/')) {
-      const ext = route.split('.').pop();
-      const file = ext === 'png' ? '../assets/icon.png' : `media/sample.${ext}`;
+      const ext = route.match(/\.(jpg|mp4|m4a)$/)?.[1];
+      const file = ext ? `media/sample.${ext}` : '../assets/icon.png';
       return new Response(Bun.file(new URL(file, import.meta.url)), { headers: CORS });
     }
     const read = route.match(/^GET \/api\/v1\/statuses\/([^/]+)(\/context)?$/);
@@ -278,6 +299,12 @@ Bun.serve({
           post('a1', host),
           post('k1', host),
           post('s1', host),
+          post('f1', host),
+          post('u1', host),
+          post('x1', host),
+          post('x2', host),
+          post('s2', host),
+          boost('bp3', host, post('p3', host)),
         ] : []);
       case 'GET /api/v1/timelines/tag/birds':
         return json(firstPage ? [status('t1', host, 'A post about birds')] : []);

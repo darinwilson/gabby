@@ -42,11 +42,15 @@ shape Media
   ratio: number
 
 // The preview of the link a post shares; url is "" when there is none.
+shape Motion
+  prefersReducedMotion: bool
+
 shape Card
   url: string
   title: string
   description: string
   image: string
+  alt: string
   provider: string
 
 shape Timeline
@@ -188,7 +192,7 @@ component Gabby
   derive centered = wide and viewport.width >= 1264
   resource instance = loadInstance(host) when host != "" and wide as shape Instance else empty()
   resource profile = loadProfile(host) when home and wide as shape Profile else empty()
-  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false, media=[], sensitive=false, card=Card(url="", title="", description="", image="", provider=""))]) : posts
+  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false, media=[], sensitive=false, card=Card(url="", title="", description="", image="", alt="", provider=""))]) : posts
   derive timelineError = match failure(timeline) { case some(f) => (f.code == "auth-required" ? "This server only shows its public timeline to signed-in users." : "Couldn't load the timeline."), case none => "" }
 
   action edit(v: string)
@@ -669,6 +673,8 @@ component PostRow
   // A hashtag's press also reaches the row's; the row skips the press that opened a hashtag.
   state tagged = false
   state revealed = false
+  resource motion = exactViewport() as shape Motion
+  derive still = motion.prefersReducedMotion
   action reveal
     revealed = not revealed
   action down
@@ -733,23 +739,23 @@ component PostRow
           if p.media.length > 0
             column gap=6 margin-top=8 testId=`${prefix}media-${p.id}`
               if p.sensitive
-                button press=reveal aria-expanded=revealed align-self="flex-start" testId=`${prefix}reveal-${p.id}`
+                button press=reveal align-self="flex-start" testId=`${prefix}reveal-${p.id}`
                   text (revealed ? "Hide sensitive media" : "Show sensitive media")
               if revealed or not p.sensitive
                 row gap=4 flex-wrap="wrap"
                   for m in p.media key=m.id
                     if m.kind == "image"
-                      link href=m.url aria-label=(m.description != "" ? m.description : "Picture") flex-grow=1 flex-basis=(p.media.length > 1 ? "40%" : "100%") min-width=0
+                      link href=m.url aria-label=(m.description != "" ? `Picture: ${m.description}` : "Picture") flex-basis=(p.media.length > 1 ? "calc(50% - 2px)" : "100%") min-width=0
                         border-radius=8 overflow="hidden" testId=`${prefix}image-${p.id}-${m.id}`
-                        image m.url alt=m.description width="100%" display="block" object-fit="cover" background-color="-exact-fill"
-                          aspect-ratio=(p.media.length > 1 or m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio)
+                        image (m.preview != "" ? m.preview : m.url) alt="" width="100%" max-height=480 display="block" object-fit="cover" background-color="-exact-fill"
+                          aspect-ratio=(p.media.length > 1 or m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio > 3 ? 3 : m.ratio)
                     else if m.kind == "video" or m.kind == "gifv"
-                      video m.url poster=m.preview controls=(m.kind == "video") autoplay=(m.kind == "gifv") muted=(m.kind == "gifv") loop=(m.kind == "gifv")
-                        playsinline=true preload="metadata" aria-label=(m.description != "" ? m.description : m.kind == "gifv" ? "Animated picture" : "Video")
-                        flex-basis="100%" min-width=0 aspect-ratio=(m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio) background-color="-exact-fill" border-radius=8
+                      video m.url poster=m.preview controls=(m.kind == "video" or still) autoplay=(m.kind == "gifv" and not still) muted=(m.kind == "gifv") loop=(m.kind == "gifv")
+                        playsinline=true preload=(focused ? "metadata" : "none") aria-label=(m.description != "" ? m.description : m.kind == "gifv" ? "Animated picture" : "Video")
+                        flex-basis="100%" min-width=0 max-height=480 aspect-ratio=(m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio > 3 ? 3 : m.ratio) background-color="-exact-fill" border-radius=8
                         testId=`${prefix}video-${p.id}-${m.id}`
                     else if m.kind == "audio"
-                      audio m.url controls=true preload="metadata" aria-label=(m.description != "" ? m.description : "Sound")
+                      audio m.url controls=true preload=(focused ? "metadata" : "none") aria-label=(m.description != "" ? m.description : "Sound")
                         flex-basis="100%" min-width=0 testId=`${prefix}audio-${p.id}-${m.id}`
                     else
                       link href=m.url flex-basis="100%" padding=12 border-radius=8 background-color="-exact-fill" testId=`${prefix}file-${p.id}-${m.id}`
@@ -757,8 +763,8 @@ component PostRow
           else if p.card.url != ""
             link href=p.card.url margin-top=8 display="flex" flex-direction="column" border-style="solid" border-width=1 border-color="-exact-separator"
               border-radius=8 overflow="hidden" color="-exact-label" testId=`${prefix}card-${p.id}`
-              if p.card.image != ""
-                image p.card.image alt="" width="100%" display="block" aspect-ratio=1.91 object-fit="cover" background-color="-exact-fill"
+              if p.card.image != "" and not p.sensitive
+                image p.card.image alt=p.card.alt testId=`${prefix}card-image-${p.id}` width="100%" display="block" aspect-ratio=1.91 object-fit="cover" background-color="-exact-fill"
               column padding=12 gap=2
                 text p.card.provider font="-exact-footnote" color="-exact-secondary-label" overflow-wrap="break-word" testId=`${prefix}card-provider-${p.id}`
                 text p.card.title font-weight=600 overflow-wrap="break-word" testId=`${prefix}card-title-${p.id}`
