@@ -374,6 +374,12 @@ type Thread = Result<'loadThread'>;
 const threads = new Map<string, Thread>();
 const acted = new Set<string>();
 
+const GONE: Post = {
+  id: '', statusId: '', name: '', handle: '', avatar: '', text: '', boostedBy: '', boostedAvatar: '', posted: 0,
+  visibility: '', replies: 0, reblogs: 0, favourites: 0, reblogged: false, favourited: false, accountId: '',
+  pinned: false, media: [], sensitive: false, card: { url: '', title: '', description: '', image: '', alt: '', provider: '' },
+};
+
 async function loadThread(host: string, id: string, store: Store): Promise<Thread> {
   const key = JSON.stringify([host, id]);
   const signed = await signedIn(host, store);
@@ -385,14 +391,16 @@ async function loadThread(host: string, id: string, store: Store): Promise<Threa
       ? await (await providerFor(host, store)).fetch(store, url)
       : await fetch(url, { exactTimeout: TIMEOUT });
     if (response.status === 401) throw failure(signed ? 'auth-expired' : 'auth-required');
-    if (response.status === 404) throw failure('not-found');
+    // A deleted post is an answer, not a failure: the view says it's gone.
+    if (response.status === 404) return null;
     if (!response.ok) throw failure('http');
     return response.json();
   };
-  const status = (await get(id, '')) as Status;
+  const status = (await get(id, '')) as Status | null;
   // A boost has no thread of its own; the post it boosted does.
-  const shown = status.reblog ?? status;
-  const context = (await get(shown.id, '/context')) as { ancestors: Status[]; descendants: Status[] };
+  const shown = status && (status.reblog ?? status);
+  const context = shown && (await get(shown.id, '/context')) as { ancestors: Status[]; descendants: Status[] } | null;
+  if (!shown || !context) return { host, id, ancestors: [], post: GONE, replies: [], signedIn: signed, gone: true };
   const thread = {
     host,
     id,
@@ -400,6 +408,7 @@ async function loadThread(host: string, id: string, store: Store): Promise<Threa
     post: toPost(shown, host),
     replies: context.descendants.map((s) => toPost(s, host)),
     signedIn: signed,
+    gone: false,
   };
   threads.set(key, thread);
   return thread;
