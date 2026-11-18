@@ -81,5 +81,19 @@
       "sizes": "1024x1024",
       "type": "image/png"
     }
-  ]
+  ],
+  "verify": {
+    "accept": [
+      {
+        "finding": "overlap",
+        "node": "compose-fab",
+        "why": "The compose button floats over the timeline by design; the list pads its end so the last post scrolls clear of it."
+      },
+      {
+        "finding": "overlap",
+        "node": "open-*",
+        "why": "A post scrolling under the floating compose button; the list pads its end so the last post scrolls clear of it."
+      }
+    ]
+  }
 }

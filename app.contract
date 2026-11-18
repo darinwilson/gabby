@@ -71,6 +71,7 @@ shape Thread
   post: Post
   replies: Post[]
   signedIn: bool
+  gone: bool
 
 shape Field
   key: string
@@ -357,7 +358,7 @@ component Gabby
                 column width="calc(50% - 300px)" flex-shrink=0 testId="centered-spacer"
             if not wide and timeline.signedIn and timeline.host == host
               button press=compose aria-label="New post" appearance="none" background-color="-exact-label" color="-exact-background" position="absolute" right=16 bottom=24
-                width=56 height=56 border-radius=28 padding=0 box-shadow="0 2px 8px rgba(0, 0, 0, 0.3)" testId="compose-fab"
+                width=56 height=56 border-radius=28 padding=0 display="flex" align-items="center" justify-content="center" box-shadow="0 2px 8px rgba(0, 0, 0, 0.3)" testId="compose-fab"
                 image "symbol:compose" font-size="min(-exact-title3, 28px)"
         if e.name == "post"
           PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged)
@@ -391,7 +392,7 @@ component PostView
   resource thread = loadThread(host, id, wrote) as shape Thread else empty() transient
   mutation acted as shape Reply refreshes thread then afterAct
   derive ready = thread.host == host and thread.id == id
-  derive error = match failure(thread) { case some(f) => (f.code == "not-found" ? "This post isn't available." : f.code == "auth-required" ? "This server only shows posts to signed-in users." : f.code == "auth-expired" ? "Log in again to see this post." : "Couldn't load the post."), case none => "" }
+  derive error = ready and thread.gone ? "This post isn't available." : match failure(thread) { case some(f) => (f.code == "auth-required" ? "This server only shows posts to signed-in users." : f.code == "auth-expired" ? "Log in again to see this post." : "Couldn't load the post."), case none => "" }
 
   action open(p: Post)
     if p.statusId != id
@@ -419,7 +420,7 @@ component PostView
         button id="back" press=back testId="post-back"
           text "Back"
         text "Post" role="heading" aria-level=2 testId="post-title"
-      if error != "" and not ready
+      if error != "" and (not ready or thread.gone)
         column padding=16 gap=12 align-items="center"
           text error text-align="center" testId="thread-error"
           button press=retry buttonStyle="bordered" testId="thread-retry"
@@ -760,7 +761,7 @@ component PostRow
                         flex-basis="100%" min-width=0 testId=`${prefix}audio-${p.id}-${m.id}`
                     else
                       link href=m.url flex-basis="100%" padding=12 border-radius=8 background-color="-exact-fill" testId=`${prefix}file-${p.id}-${m.id}`
-                        text (m.description != "" ? `Open attachment: ${m.description}` : "Open attachment") overflow-wrap="break-word"
+                        text (m.description != "" ? `Open attachment: ${m.description}` : "Open attachment") overflow-wrap="break-word" color="light-dark(#4338ca, #c7d2fe)"
           else if p.card.url != ""
             link href=p.card.url margin-top=8 display="flex" flex-direction="column" border-style="solid" border-width=1 border-color="-exact-separator"
               border-radius=8 overflow="hidden" color="-exact-label" testId=`${prefix}card-${p.id}`

@@ -767,6 +767,8 @@ test "a post's view shows its media too"
 test "a GIF plays in the timeline"
   at "/timeline/fosstodon.org"
   clock data
+  tap "posts" into "f1"
+  clock settle
   expect tree has "video-f1-f1"
 
 test "a file the server couldn't show links to the original, and one still processing is left out"
