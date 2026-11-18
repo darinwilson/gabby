@@ -285,8 +285,8 @@ component Gabby
                     button press=connect disabled=(draft.trim() == "") buttonStyle="filled" testId="connect"
                       text "Connect"
                 footer
-                  text (showError ? connectError : "Enter the address of a Mastodon server.")
-                    color=(showError ? "-exact-system-red" : "-exact-secondary-label") testId="server-hint"
+                  text (showError ? connectError : server != "" ? `Connected to ${server}.` : "Enter the address of a Mastodon server.")
+                    aria-live="polite" color=(showError ? "-exact-system-red" : "-exact-secondary-label") testId="server-hint"
               if server != ""
                 section testId="options"
                   if accountReady and account.supported
@@ -319,6 +319,11 @@ component Gabby
                 button id="back" press=back testId="back"
                   text "Back"
               text (e.name == "feed" ? "Home" : e.name == "tag" ? `#${e.params.tag}` : "Public") role="heading" aria-level=2 testId="timeline-title"
+            // Before the posts so VoiceOver reaches it first; z-index keeps it drawn above them.
+            if not wide and timeline.signedIn and timeline.host == host
+              button press=compose aria-label="New post" appearance="none" background-color="-exact-label" color="-exact-background" position="absolute" right=16 bottom=24 z-index=1
+                width=56 height=56 border-radius=28 padding=0 display="flex" align-items="center" justify-content="center" box-shadow="0 2px 8px rgba(0, 0, 0, 0.3)" testId="compose-fab"
+                image "symbol:compose" font-size="min(-exact-title3, 28px)"
             row flex=1 min-height=0
               if wide and instance.domain == host
                 aside width=(centered ? "calc(50% - 300px)" : "18.75rem") flex-shrink=0 overflow-y="auto" box-sizing="border-box" padding=16 testId="instance"
@@ -356,10 +361,6 @@ component Gabby
                       PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, profile=openAccount, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, focused=false)
               if centered and instance.domain == host
                 column width="calc(50% - 300px)" flex-shrink=0 testId="centered-spacer"
-            if not wide and timeline.signedIn and timeline.host == host
-              button press=compose aria-label="New post" appearance="none" background-color="-exact-label" color="-exact-background" position="absolute" right=16 bottom=24
-                width=56 height=56 border-radius=28 padding=0 display="flex" align-items="center" justify-content="center" box-shadow="0 2px 8px rgba(0, 0, 0, 0.3)" testId="compose-fab"
-                image "symbol:compose" font-size="min(-exact-title3, 28px)"
         if e.name == "post"
           PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged)
         if e.name == "compose"
@@ -569,6 +570,7 @@ component Composer
   derive left = counted.text == body ? counted.left : 500 - body.length
   derive maxMedia = counted.media > 0 ? counted.media : 4
   derive busy = pending(uploaded) or pending(posted)
+  derive visibilityName = visibility == "direct" ? "Mentioned people only" : visibility == "private" ? "Followers only" : visibility == "unlisted" ? "Quiet public" : "Public"
   derive widestRank = widest == "direct" ? 3 : widest == "private" ? 2 : widest == "unlisted" ? 1 : 0
   derive canPost = (body.trim() != "" or attached.length > 0) and left >= 0 and not busy
   derive postError = match posted { case some(o) => o.error, case none => "" }
@@ -577,6 +579,10 @@ component Composer
   action edit(v: string)
     text = v
     edited = true
+  // A reply starts with its mentions; the caret goes after them, not before.
+  action focused
+    if not edited and start != ""
+      setSelectionRange(`${prefix}compose-text`, -1, -1)
   action setVisibility(v: string)
     chosen = v
   action attach
@@ -602,7 +608,7 @@ component Composer
 
   view
     column gap=10 testId=`${prefix}compose`
-      textarea value=body input=edit placeholder=(replyTo != "" ? "Write your reply" : "What's on your mind?") aria-label=(replyTo != "" ? "Reply text" : "Post text") min-height=120 width="100%" box-sizing="border-box" testId=`${prefix}compose-text`
+      textarea id=`${prefix}compose-text` value=body input=edit focus=focused aria-describedby=`${prefix}compose-left` placeholder=(replyTo != "" ? "Write your reply" : "What's on your mind?") aria-label=(replyTo != "" ? "Reply text" : "Post text") min-height=120 width="100%" box-sizing="border-box" testId=`${prefix}compose-text`
       if attached.length > 0
         row gap=8 flex-wrap="wrap" testId=`${prefix}compose-media`
           for a in attached key=a.id
@@ -622,7 +628,7 @@ component Composer
         input type="file" id=`${prefix}compose-file` multiple=true change=picked display="none" aria-hidden=true testId=`${prefix}compose-file`
         button press=attach disabled=(attached.length >= maxMedia or busy) aria-label="Add photos, video or audio" buttonStyle="bordered" testId=`${prefix}compose-attach`
           image "symbol:photo"
-        select value=visibility change=setVisibility aria-label="Who can see this" flex=1 min-width=0 testId=`${prefix}compose-visibility`
+        select value=visibility change=setVisibility aria-label=`Who can see this: ${visibilityName}` flex=1 min-width=0 testId=`${prefix}compose-visibility`
           option "Public" value="public" disabled=(widestRank > 0) testId=`${prefix}compose-visibility-public`
           option "Quiet public" value="unlisted" disabled=(widestRank > 1) testId=`${prefix}compose-visibility-unlisted`
           option "Followers only" value="private" disabled=(widestRank > 2) testId=`${prefix}compose-visibility-private`
@@ -630,7 +636,7 @@ component Composer
       row gap=12 align-items="center" justify-content="flex-end"
         if busy
           progress aria-label=(pending(uploaded) ? "Uploading" : "Posting") testId=`${prefix}compose-busy`
-        text `${left}` font-variant-numeric="tabular-nums" color=(left < 0 ? "-exact-system-red" : "-exact-secondary-label") aria-label=`${left} ${left == 1 ? "character" : "characters"} left` testId=`${prefix}compose-left`
+        text `${left}` id=`${prefix}compose-left` font-variant-numeric="tabular-nums" color=(left < 0 ? "-exact-system-red" : "-exact-secondary-label") aria-label=`${left} ${left == 1 ? "character" : "characters"} left` testId=`${prefix}compose-left`
         button press=submit disabled=(not canPost) buttonStyle="filled" testId=`${prefix}compose-post`
           text (replyTo != "" ? "Reply" : "Post")
 
@@ -724,7 +730,7 @@ component PostRow
                   image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
                 text `${p.boostedBy} boosted` testId=`${prefix}boosted-${p.id}`
             row gap=6 align-items="center" flex-wrap="wrap"
-              text p.name flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
+              text p.name role="heading" aria-level=3 font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
               image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
                 aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
                 font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
@@ -776,11 +782,11 @@ component PostRow
             button appearance="none" press=reply(p) disabled=(not signedIn) aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
               image "symbol:reply" aria-hidden=true
               text (p.replies > 0 ? `${p.replies}` : "") testId=`${prefix}replies-${p.id}`
-            button appearance="none" press=boost(p) disabled=(not signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost") aria-pressed=p.reblogged
+            button appearance="none" press=boost(p) disabled=(not signedIn) aria-label=(p.reblogged ? "Undo boost" : "Boost")
               display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 color=(p.reblogged ? "light-dark(#1a7f37, #30d158)" : "-exact-secondary-label") testId=`${prefix}boost-${p.id}`
               image "symbol:repeat" aria-hidden=true
               text (p.reblogs > 0 ? `${p.reblogs}` : "") testId=`${prefix}reblogs-${p.id}`
-            button appearance="none" press=favourite(p) disabled=(not signedIn) aria-label=(p.favourited ? "Unlike" : "Like") aria-pressed=p.favourited
+            button appearance="none" press=favourite(p) disabled=(not signedIn) aria-label=(p.favourited ? "Unlike" : "Like")
               display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 color=(p.favourited ? "light-dark(#b45309, #ff9f0a)" : "-exact-secondary-label") testId=`${prefix}favourite-${p.id}`
               image (p.favourited ? "symbol:star-fill" : "symbol:star") aria-hidden=true
               text (p.favourites > 0 ? `${p.favourites}` : "") testId=`${prefix}favourites-${p.id}`
