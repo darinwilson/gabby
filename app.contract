@@ -729,7 +729,7 @@ component PostRow
                 font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
               if not focused
                 text font="-exact-footnote" color="-exact-secondary-label"
-                  text "· " aria-hidden=true
+                  text "· " aria-hidden=true
                   time datetime=p.posted format="relative" testId=`${prefix}time-${p.id}`
             text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
             text p.text markup="markdown" atoms="hashtag" atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
