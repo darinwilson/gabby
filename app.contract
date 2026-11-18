@@ -728,8 +728,9 @@ component PostRow
                 aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
                 font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
               if not focused
-                text "·" font="-exact-footnote" color="-exact-secondary-label" aria-hidden=true
-                time datetime=p.posted format="relative" max-width="100%" font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}time-${p.id}`
+                text font="-exact-footnote" color="-exact-secondary-label"
+                  text "· " aria-hidden=true
+                  time datetime=p.posted format="relative" testId=`${prefix}time-${p.id}`
             text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
             text p.text markup="markdown" atoms="hashtag" atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
             if focused
@@ -770,7 +771,7 @@ component PostRow
                 text p.card.title font-weight=600 overflow-wrap="break-word" testId=`${prefix}card-title-${p.id}`
                 if p.card.description != ""
                   text p.card.description font="-exact-footnote" color="-exact-secondary-label" line-clamp=2 testId=`${prefix}card-description-${p.id}`
-          row column-gap=16 flex-wrap="wrap" margin-top=4 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
+          row column-gap=16 flex-wrap="wrap" margin-top=4 margin-bottom=-10 align-items="center" font="-exact-subheadline" color="-exact-secondary-label"
             button appearance="none" press=reply(p) disabled=(not signedIn) aria-label=`Reply, ${p.replies}` display="flex" gap=4 align-items="center" flex-shrink=0 min-width=44 min-height=44 testId=`${prefix}reply-${p.id}`
               image "symbol:reply" aria-hidden=true
               text (p.replies > 0 ? `${p.replies}` : "") testId=`${prefix}replies-${p.id}`
