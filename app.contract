@@ -167,6 +167,8 @@ component Gabby
   state server = ""
   // Counts the replies sent, so the posts and profiles under the reply view read them.
   state wrote = 0
+  state pictures: Media[] = []
+  state closable = false
   resource account = loadAccount(server) when server != "" as shape Account else empty()
   derive accountReady = account.host == server
   resource recent = loadRecent() as shape Server[] else empty()
@@ -240,6 +242,15 @@ component Gabby
     nav = push(nav, path("account", h, id))
   action postChanged
     refresh timeline
+  action toggleClose
+    closable = not closable
+  action closed
+    pictures = []
+  action zoom(ms: Media[], m: Media)
+    pictures = ms
+    closable = false
+    showModal("lightbox")
+    scrollIntoView(`lightbox-${m.id}`, inline="start", behavior="instant")
   action compose
     nav = push(nav, path("compose", host))
   action composed
@@ -358,11 +369,11 @@ component Gabby
                   list id="posts" testId="posts" virtualized=true appearance="none" flex=1 min-height=0
                     estimated-item-height=120 reachend=loadMore reach-margin="100%" padding-bottom=(not wide and timeline.signedIn ? 96 : 0)
                     for p in rows key=p.id
-                      PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, profile=openAccount, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+                      PostRow(p=p, wide=wide, signedIn=timeline.signedIn, prefix="", open=openPost, profile=openAccount, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, zoom=zoom, focused=false)
               if centered and instance.domain == host
                 column width="calc(50% - 300px)" flex-shrink=0 testId="centered-spacer"
         if e.name == "post"
-          PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged)
+          PostView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged, zoom=zoom)
         if e.name == "compose"
           column navigationKey=`${e.id}` navigationScroll="compose" position="absolute" inset=0 display="flex" flex-direction="column"
             header
@@ -372,9 +383,23 @@ component Gabby
             column flex=1 min-height=0 overflow-y="auto" padding=16 width="100%" max-width="37.5rem" margin-left="auto" margin-right="auto" box-sizing="border-box"
               Composer(host=e.params.host, prefix="", replyTo="", start="", startVisibility="public", widest="public", done=composed)
         if e.name == "account"
-          PersonView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged)
+          PersonView(route=`${e.id}`, host=e.params.host, id=e.params.id, wide=wide, wrote=wrote, back=back, show=showPost, person=showAccount, reply=showReply, openTag=openTag, changed=postChanged, zoom=zoom)
         if e.name == "reply"
           ReplyView(route=`${e.id}`, host=e.params.host, id=e.params.id, cancel=cancelReply, done=replied)
+
+      // At the root, outside every route, so the safe-area inset is the screen's.
+      dialog id="lightbox" aria-label="Pictures" closedby="any" close=closed width="100vw" height="100vh" max-width="100vw" max-height="100vh"
+        margin=0 padding=0 border-width=0 color-scheme="dark" background-color="-exact-background" color="-exact-label" testId="lightbox"
+        scroll width="100%" height="100%" overflow-x="scroll" overflow-y="hidden" scrollbar-width="none" scroll-snap-type="x mandatory"
+          row height="100%"
+            for m in pictures key=m.id
+              scroll id=`lightbox-${m.id}` press=toggleClose -exact-max-zoom=4 width="100vw" height="100%" flex-shrink=0 scroll-snap-align="start" scroll-snap-stop="always" testId=`lightbox-${m.id}`
+                image m.url alt=m.description width="100%" height="100%" object-fit="contain"
+        // Hidden until a tap, but not at opacity 0, which would hide it from VoiceOver too.
+        button appearance="none" commandfor="lightbox" command="close" aria-label="Close" position="absolute" top="calc(var(--exact-safe-area-inset-top) + 8px)" right=8
+          opacity=(closable ? 1 : 0.02)
+          width=44 height=44 padding=0 display="flex" align-items="center" justify-content="center" border-radius=22 background-color="-exact-fill" testId="lightbox-close"
+          image "symbol:close" aria-hidden=true
 
 // A post and the posts around it: what it replies to above, its replies below.
 component PostView
@@ -390,6 +415,7 @@ component PostView
     reply: action
     openTag: action
     changed: action
+    zoom: action
   resource thread = loadThread(host, id, wrote) as shape Thread else empty() transient
   mutation acted as shape Reply refreshes thread then afterAct
   derive ready = thread.host == host and thread.id == id
@@ -432,10 +458,10 @@ component PostView
       else
         list id="thread" testId="thread" appearance="none" flex=1 min-height=0
           for p in thread.ancestors key=p.id
-            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, focused=false)
-          PostRow(p=thread.post, wide=wide, signedIn=thread.signedIn, prefix="focus-", focused=true, open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag)
+            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, zoom=zoom, focused=false)
+          PostRow(p=thread.post, wide=wide, signedIn=thread.signedIn, prefix="focus-", focused=true, open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, zoom=zoom)
           for p in thread.replies key=p.id
-            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+            PostRow(p=p, wide=wide, signedIn=thread.signedIn, prefix="thread-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, zoom=zoom, focused=false)
 
 // An account's profile above its posts.
 component PersonView
@@ -451,6 +477,7 @@ component PersonView
     reply: action
     openTag: action
     changed: action
+    zoom: action
   resource who = loadPerson(host, id, wrote) as shape Person else empty() transient
   mutation acted as shape Reply refreshes who then afterAct
   mutation more as shape Reply refreshes who
@@ -531,11 +558,11 @@ component PersonView
                 text `${who.following} following` testId="person-following"
                 text `${who.followers} ${who.followers == 1 ? "follower" : "followers"}` testId="person-followers"
           for p in who.pinned key=`pinned-${p.id}`
-            PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="pinned-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+            PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="pinned-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, zoom=zoom, focused=false)
           if who.pinned.length == 0 and who.posts.length == 0
             text "No posts yet." padding=16 text-align="center" color="-exact-secondary-label" testId="person-empty"
           for p in who.posts key=p.id
-            PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="person-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, focused=false)
+            PostRow(p=p, wide=wide, signedIn=who.signedIn, prefix="person-", open=open, profile=openPerson, reply=replyTo, boost=boost, favourite=favourite, openTag=openTag, zoom=zoom, focused=false)
           if pending(more)
             column padding=16 align-items="center"
               progress aria-label="Loading" testId="person-more"
@@ -682,8 +709,11 @@ component PostRow
   state revealed = false
   resource motion = exactViewport() as shape Motion
   derive still = motion.prefersReducedMotion
+  derive pictures = p.media.filter(m => m.kind == "image")
   action reveal
     revealed = not revealed
+  action view(m: Media)
+    zoom(pictures, m)
   action down
     tagged = false
   action tag(e: AtomEvent)
@@ -705,6 +735,7 @@ component PostRow
     boost: action
     favourite: action
     openTag: action
+    zoom: action
   view
     row gap=12 padding=(wide ? 16 : 12) align-items="flex-start" width="100%" box-sizing="border-box" max-width=(wide ? "600px" : "none") margin-left="auto" margin-right="auto"
       border-style="solid" border-color="-exact-separator" border-width=(wide ? "0 1px 1px" : "0 0 1px") testId=`${prefix}post-${p.id}`
@@ -753,8 +784,8 @@ component PostRow
                 row gap=4 flex-wrap="wrap"
                   for m in p.media key=m.id
                     if m.kind == "image"
-                      link href=m.url aria-label=(m.description != "" ? `Picture: ${m.description}` : "Picture") flex-basis=(p.media.length > 1 ? "calc(50% - 2px)" : "100%") min-width=0
-                        border-radius=8 overflow="hidden" testId=`${prefix}image-${p.id}-${m.id}`
+                      button appearance="none" press=view(m) aria-label=(m.description != "" ? `Picture: ${m.description}` : "Picture") flex-basis=(p.media.length > 1 ? "calc(50% - 2px)" : "100%") min-width=0
+                        padding=0 border-radius=8 overflow="hidden" testId=`${prefix}image-${p.id}-${m.id}`
                         image (m.preview != "" ? m.preview : m.url) alt="" width="100%" max-height=480 display="block" object-fit="cover" background-color="-exact-fill"
                           aspect-ratio=(p.media.length > 1 or m.ratio == 0 ? 1.7778 : m.ratio < 0.75 ? 0.75 : m.ratio > 3 ? 3 : m.ratio)
                     else if m.kind == "video" or m.kind == "gifv"

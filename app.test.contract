@@ -731,6 +731,21 @@ test "a post's pictures show in the timeline, and not its link preview"
   expect tree missing "card-p3"
   expect tree missing "media-2"
 
+test "tapping a picture opens it in a lightbox with the post's other pictures"
+  at "/timeline/fosstodon.org"
+  clock data
+  expect tree missing "lightbox-g2"
+  tap "image-p3-g2"
+  clock settle
+  expect tree has "lightbox-g1"
+  expect tree has "lightbox-g2"
+  expect tree missing "post-title"
+  tap "lightbox-g2"
+  clock settle
+  tap "lightbox-close"
+  clock settle
+  expect tree missing "lightbox-g2"
+
 test "a video and a sound play inline"
   at "/timeline/fosstodon.org"
   clock data
