@@ -133,7 +133,7 @@ const ADA = (host: string) => ({
   username: 'ada',
   acct: 'ada',
   display_name: 'Ada',
-  avatar: '',
+  avatar: `http://127.0.0.1:${port}/${host}/media/avatar.jpg`,
   header: `https://${host}/headers/original/missing.png`,
   note: `<p>Writes about <a href="https://${host}/tags/birds" class="mention hashtag" rel="tag">#<span>birds</span></a></p>`,
   fields: [{ name: 'Website', value: '<a href="https://ada.example" rel="me nofollow noopener noreferrer" target="_blank"><span class="invisible">https://</span><span class="">ada.example</span></a>' }],

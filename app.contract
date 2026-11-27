@@ -485,6 +485,9 @@ component PersonView
   derive ready = who.host == host and who.id == id
   derive error = match failure(who) { case some(f) => (f.code == "not-found" ? "This account isn't available." : f.code == "auth-required" ? "This server only shows profiles to signed-in users." : f.code == "auth-expired" ? "Log in again to see this profile." : "Couldn't load the profile."), case none => "" }
   derive followLabel = who.followed ? "Unfollow" : who.requested ? "Requested" : "Follow"
+  derive avatar = Media(id="avatar", kind="image", url=who.avatar, preview=who.avatar, description=`${who.name}'s profile picture`, ratio=1)
+  action viewAvatar
+    zoom([avatar], avatar)
 
   action open(p: Post)
     show(host, p.statusId)
@@ -536,7 +539,8 @@ component PersonView
             column padding-left=16 padding-right=16 gap=10
               row align-items="flex-end" justify-content="space-between" gap=12 margin-top=-36
                 if who.avatar != ""
-                  image who.avatar width=80 height=80 border-radius="50%" border-width=3 border-style="solid" border-color="-exact-background" object-fit="cover" alt="" testId="person-avatar"
+                  button appearance="none" press=viewAvatar aria-label=`${who.name}'s profile picture` padding=0 border-radius="50%" testId="person-avatar-button"
+                    image who.avatar width=80 height=80 border-radius="50%" border-width=3 border-style="solid" border-color="-exact-background" object-fit="cover" alt="" testId="person-avatar"
                 else
                   column width=80 height=80 border-radius="50%" border-width=3 border-style="solid" border-color="-exact-background" background-color="-exact-fill" testId="person-avatar"
                 if who.signedIn and not who.self

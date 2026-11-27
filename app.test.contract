@@ -266,6 +266,21 @@ test "an avatar opens its profile, pinned posts first, and Back returns"
   expect tree missing "person-title"
   expect text "timeline-title" == "Public"
 
+test "a profile's picture opens in the lightbox"
+  at "/timeline/fosstodon.org"
+  clock data
+  tap "avatar-2"
+  clock settle
+  clock data
+  expect tree missing "lightbox-avatar"
+  tap "person-avatar-button"
+  clock settle
+  expect tree has "lightbox-avatar"
+  tap "lightbox-close"
+  clock settle
+  expect tree missing "lightbox-avatar"
+  expect text "person-title" == "Ada"
+
 test "a post in a profile opens it"
   at "/timeline/fosstodon.org"
   clock data
