@@ -41,6 +41,12 @@ const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
 // Posts a test can open, each with the post it replies to.
 const LIN = (host: string) => ({ id: 'lin', username: 'lin', acct: `lin@${host}`, display_name: 'Lin', avatar: '' });
 
+// Kim's name and post carry custom emoji; :nothere: isn't one and :broken: has no image, so both stay text.
+const BLOBCAT = (host: string) => ({ shortcode: 'blob_cat', url: `http://127.0.0.1:${port}/${host}/media/blob_cat.jpg`, static_url: `http://127.0.0.1:${port}/${host}/media/blob_cat_still.jpg`, visible_in_picker: true });
+// An emoji whose image another server sent as something that isn't a web address.
+const BROKEN = { shortcode: 'broken', url: 'missing.png', static_url: 'missing.png', visible_in_picker: true };
+const KIM = (host: string) => ({ id: 'kim', username: 'kim', acct: `kim@${host}`, display_name: 'Kim :blob_cat:', avatar: '', emojis: [BLOBCAT(host)] });
+
 // A file in a post, served from fixture/media by its extension.
 const FILE = (host: string, id: string, type: string, ext: string, description: string | null = null, width = 640, height = 400) => ({
   id,
@@ -55,7 +61,8 @@ const FILE = (host: string, id: string, type: string, ext: string, description: 
 type Spec = {
   text: (host: string) => string;
   parent?: string;
-  by?: (host: string) => ReturnType<typeof LIN>;
+  by?: (host: string) => ReturnType<typeof LIN> & { emojis?: object[] };
+  emojis?: (host: string) => object[];
   mentions?: (host: string) => { id: string; acct: string }[];
   visibility?: string;
   media?: (host: string) => object[];
@@ -101,6 +108,7 @@ const POSTS: Record<string, Spec> = {
       provider_name: 'Example Field Guides',
     }),
   },
+  'e1': { text: () => 'Hello :blob_cat: and :nothere: :broken:', by: KIM, emojis: (host) => [BLOBCAT(host), BROKEN] },
   's1': { text: () => 'A picture marked sensitive', sensitive: true, media: (host) => [FILE(host, 's1', 'image', 'jpg', 'A test pattern')] },
   's2': {
     text: () => 'A sensitive link',
@@ -115,6 +123,7 @@ const post = (id: string, host: string) => ({
   media_attachments: POSTS[id].media?.(host) ?? [],
   sensitive: POSTS[id].sensitive ?? false,
   card: POSTS[id].card?.(host) ?? null,
+  emojis: POSTS[id].emojis?.(host) ?? [],
 });
 const ancestors = (id: string): string[] => {
   const parent = POSTS[id].parent;
@@ -146,9 +155,10 @@ const ADA = (host: string) => ({
 const PROFILES: Record<string, (host: string) => object> = {
   ada: ADA,
   lin: (host) => ({ ...LIN(host), acct: 'lin', locked: true, header: '', note: '', fields: [], followers_count: 3, following_count: 1, statuses_count: 0 }),
+  kim: (host) => ({ ...KIM(host), acct: 'kim', header: '', note: '', fields: [], followers_count: 0, following_count: 0, statuses_count: 1 }),
   me: () => ({ ...ME, header: '', note: '', fields: [], followers_count: 0, following_count: 1, statuses_count: 1 }),
 };
-const PROFILE_POSTS: Record<string, string[]> = { ada: ['2', '1'], lin: [], me: ['m1'] };
+const PROFILE_POSTS: Record<string, string[]> = { ada: ['2', '1'], lin: [], me: ['m1'], kim: ['e1'] };
 
 const MEDIA = (id: string, host: string, type = 'image') => ({
   id,
@@ -305,6 +315,7 @@ Bun.serve({
           post('x2', host),
           post('s2', host),
           boost('bp3', host, post('p3', host)),
+          post('e1', host),
         ] : []);
       case 'GET /api/v1/timelines/tag/birds':
         return json(firstPage ? [status('t1', host, 'A post about birds')] : []);
