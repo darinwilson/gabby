@@ -761,7 +761,7 @@ test "tapping a picture opens it in a lightbox with the post's other pictures"
   clock settle
   expect tree missing "lightbox-g2"
 
-test "custom emoji show in a post and its author's name, and plain names leave them out"
+test "custom emoji show in a post, its author's name and their profile, and plain names leave them out"
   at "/timeline/fosstodon.org"
   clock data
   tap "posts" into "e1"
@@ -772,6 +772,9 @@ test "custom emoji show in a post and its author's name, and plain names leave t
   clock data
   expect text "person-title" == "Kim"
   expect text "person-name" == "Kim [](emoji:blob_cat)"
+  expect text "person-bio" == "Likes cats [](emoji:blob_cat)"
+  expect text "field-name-0" == "Pet [](emoji:blob_cat)"
+  expect text "field-value-0" == "Mochi [](emoji:blob_cat)"
 
 test "a video and a sound play inline"
   at "/timeline/fosstodon.org"

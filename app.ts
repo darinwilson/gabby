@@ -490,8 +490,13 @@ async function loadPerson(host: string, id: string, store: Store): Promise<Perso
     avatar: account.avatar,
     // Mastodon names a placeholder image when no banner is set.
     banner: !account.header || account.header.endsWith('/missing.png') ? '' : account.header,
-    bio: markdown(account.note ?? '', host),
-    fields: (account.fields ?? []).map((f, i) => ({ key: String(i), name: f.name, value: markdown(f.value, host) })),
+    bio: markdown(account.note ?? '', host, account.emojis ?? []),
+    fields: (account.fields ?? []).map((f, i) => ({
+      key: String(i),
+      name: emojify(f.name, account.emojis ?? []),
+      value: markdown(f.value, host, account.emojis ?? []),
+      emoji: toEmoji((account.emojis ?? []).filter((e) => `${f.name} ${f.value}`.includes(`:${e.shortcode}:`))),
+    })),
     followers: account.followers_count,
     following: account.following_count,
     statuses: account.statuses_count,
