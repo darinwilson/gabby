@@ -765,7 +765,7 @@ test "custom emoji show in a post and its author's name, and plain names leave t
   at "/timeline/fosstodon.org"
   clock data
   tap "posts" into "e1"
-  expect text "text-e1" == "Hello [](emoji:blob_cat) and :nothere:"
+  expect text "text-e1" == "Hello [](emoji:blob_cat) and :nothere: :broken:"
   expect text "name-e1" == "Kim [](emoji:blob_cat)"
   tap "Kim's profile"
   clock settle

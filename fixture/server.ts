@@ -41,8 +41,10 @@ const boost = (id: string, host: string, original: ReturnType<typeof status>) =>
 // Posts a test can open, each with the post it replies to.
 const LIN = (host: string) => ({ id: 'lin', username: 'lin', acct: `lin@${host}`, display_name: 'Lin', avatar: '' });
 
-// Kim's name and post carry custom emoji; :nothere: isn't one, so it stays text.
-const BLOBCAT = (host: string) => ({ shortcode: 'blob_cat', url: `http://127.0.0.1:${port}/${host}/media/blob_cat.jpg`, static_url: `http://127.0.0.1:${port}/${host}/media/blob_cat.jpg`, visible_in_picker: true });
+// Kim's name and post carry custom emoji; :nothere: isn't one and :broken: has no image, so both stay text.
+const BLOBCAT = (host: string) => ({ shortcode: 'blob_cat', url: `http://127.0.0.1:${port}/${host}/media/blob_cat.jpg`, static_url: `http://127.0.0.1:${port}/${host}/media/blob_cat_still.jpg`, visible_in_picker: true });
+// An emoji whose image another server sent as something that isn't a web address.
+const BROKEN = { shortcode: 'broken', url: 'missing.png', static_url: 'missing.png', visible_in_picker: true };
 const KIM = (host: string) => ({ id: 'kim', username: 'kim', acct: `kim@${host}`, display_name: 'Kim :blob_cat:', avatar: '', emojis: [BLOBCAT(host)] });
 
 // A file in a post, served from fixture/media by its extension.
@@ -106,7 +108,7 @@ const POSTS: Record<string, Spec> = {
       provider_name: 'Example Field Guides',
     }),
   },
-  'e1': { text: () => 'Hello :blob_cat: and :nothere:', by: KIM, emojis: (host) => [BLOBCAT(host)] },
+  'e1': { text: () => 'Hello :blob_cat: and :nothere: :broken:', by: KIM, emojis: (host) => [BLOBCAT(host), BROKEN] },
   's1': { text: () => 'A picture marked sensitive', sensitive: true, media: (host) => [FILE(host, 's1', 'image', 'jpg', 'A test pattern')] },
   's2': {
     text: () => 'A sensitive link',

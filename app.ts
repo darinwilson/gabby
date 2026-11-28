@@ -163,24 +163,29 @@ function plainText(html: string): string {
     .trim();
 }
 
-const escapeMarkdown = (text: string) => text.replace(/[\\`*_[\]~#<>|!-]/g, '\\$&');
+const escapeMarkdown = (text: string) =>
+  text.replace(/[\\`*_[\]~#<>|!+-]/g, '\\$&').replace(/^(\s*\d+)\./gm, '$1\\.');
 
 type EmojiJson = { shortcode: string; url: string; static_url?: string };
 
 // A custom emoji is an empty link with the `emoji:` scheme, which the view draws as its image.
+// Only an emoji with an image to draw replaces its shortcode.
+const usable = (emojis: EmojiJson[]) => emojis.filter((e) => web(e.url));
+const known = (emojis: EmojiJson[]) => new Set(usable(emojis).map((e) => e.shortcode));
+
 function emojify(text: string, emojis: EmojiJson[]): string {
-  const known = new Set(emojis.map((e) => e.shortcode));
+  const codes = known(emojis);
   return text.split(/(:[a-zA-Z0-9_]+:)/).map((part, i) =>
-    i % 2 === 1 && known.has(part.slice(1, -1)) ? `[](emoji:${part.slice(1, -1)})` : escapeMarkdown(part)).join('');
+    i % 2 === 1 && codes.has(part.slice(1, -1)) ? `[](emoji:${part.slice(1, -1)})` : escapeMarkdown(part)).join('');
 }
 
 // A name read aloud or in a title, where an image can't go, leaves its custom emoji out.
 function plainName(name: string, emojis: EmojiJson[], fallback: string): string {
-  const known = new Set(emojis.map((e) => e.shortcode));
-  return name.replace(/:([a-zA-Z0-9_]+):/g, (m, code: string) => (known.has(code) ? '' : m)).replace(/\s+/g, ' ').trim() || fallback;
+  const codes = known(emojis);
+  return name.replace(/:([a-zA-Z0-9_]+):/g, (m, code: string) => (codes.has(code) ? '' : m)).replace(/\s+/g, ' ').trim() || fallback;
 }
 
-const toEmoji = (emojis: EmojiJson[]) => emojis.filter((e) => web(e.url)).map((e) => ({ shortcode: e.shortcode, url: e.url }));
+const toEmoji = (emojis: EmojiJson[]) => usable(emojis).map((e) => ({ shortcode: e.shortcode, url: e.url, staticUrl: web(e.static_url) || e.url }));
 
 const INLINE: Record<string, string> = { strong: '**', b: '**', em: '*', i: '*', del: '~~', s: '~~', code: '`' };
 
