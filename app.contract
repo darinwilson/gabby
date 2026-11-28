@@ -4,19 +4,29 @@ atom hashtag link="tag:" role="link" padding-inline="10px" border-radius="999px"
   :hover
     background-color="light-dark(#e0e7ff, #3a3570)"
 
+atom emoji link="emoji:" padding-inline="0" background-color="transparent" gap="0" -exact-icon-size="1.2em"
+
 shape Connection
   ok: bool
   error: string
   host: string
 
+// A custom emoji, drawn in place of its :shortcode:.
+shape Emoji
+  shortcode: string
+  url: string
+
 shape Post
   id: string
   statusId: string
+  // Read aloud and in titles; nameMarkup is what's drawn, with its custom emoji.
   name: string
+  nameMarkup: string
   handle: string
   avatar: string
   text: string
   boostedBy: string
+  boostedByMarkup: string
   boostedAvatar: string
   posted: number
   visibility: string
@@ -30,6 +40,7 @@ shape Post
   media: Media[]
   sensitive: bool
   card: Card
+  emoji: Emoji[]
 
 // A picture, video, looping GIF, sound or (not yet processed by the server) other file in a post.
 shape Media
@@ -83,6 +94,8 @@ shape Person
   host: string
   id: string
   name: string
+  nameMarkup: string
+  emoji: Emoji[]
   handle: string
   avatar: string
   banner: string
@@ -195,7 +208,7 @@ component Gabby
   derive centered = wide and viewport.width >= 1264
   resource instance = loadInstance(host) when host != "" and wide as shape Instance else empty()
   resource profile = loadProfile(host) when home and wide as shape Profile else empty()
-  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", handle="", avatar="", text="", boostedBy="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false, media=[], sensitive=false, card=Card(url="", title="", description="", image="", alt="", provider=""))]) : posts
+  derive rows = pending(more) ? posts.concat([Post(id="loading", statusId="", name="", nameMarkup="", handle="", avatar="", text="", boostedBy="", boostedByMarkup="", boostedAvatar="", posted=0, visibility="", replies=0, reblogs=0, favourites=0, reblogged=false, favourited=false, accountId="", pinned=false, media=[], sensitive=false, card=Card(url="", title="", description="", image="", alt="", provider=""), emoji=[])]) : posts
   derive timelineError = match failure(timeline) { case some(f) => (f.code == "auth-required" ? "This server only shows its public timeline to signed-in users." : "Couldn't load the timeline."), case none => "" }
 
   action edit(v: string)
@@ -485,6 +498,7 @@ component PersonView
   derive ready = who.host == host and who.id == id
   derive error = match failure(who) { case some(f) => (f.code == "not-found" ? "This account isn't available." : f.code == "auth-required" ? "This server only shows profiles to signed-in users." : f.code == "auth-expired" ? "Log in again to see this profile." : "Couldn't load the profile."), case none => "" }
   derive followLabel = who.followed ? "Unfollow" : who.requested ? "Requested" : "Follow"
+  derive faces = who.emoji.map(e => AtomFace(source=`[](emoji:${e.shortcode})`, label="", icon=e.url, title=`:${e.shortcode}:`, color="", backgroundColor="", direction="", ariaLabel=`:${e.shortcode}:`))
   derive avatar = Media(id="avatar", kind="image", url=who.avatar, preview=who.avatar, description=`${who.name}'s profile picture`, ratio=1)
   action viewAvatar
     zoom([avatar], avatar)
@@ -547,7 +561,7 @@ component PersonView
                   button press=toggleFollow disabled=pending(followed) buttonStyle=(who.followed or who.requested ? "bordered" : "filled") testId="person-follow"
                     text followLabel
               column gap=2
-                text who.name font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="person-name"
+                text who.nameMarkup markup="markdown" atoms="emoji" atomFaces=faces font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="person-name"
                 text who.handle font="-exact-subheadline" color="-exact-secondary-label" overflow-wrap="break-word" testId="person-handle"
               if who.bio != ""
                 text who.bio markup="markdown" atoms="hashtag" atompress=openTag overflow-wrap="break-word" testId="person-bio"
@@ -714,6 +728,7 @@ component PostRow
   resource motion = exactViewport() as shape Motion
   derive still = motion.prefersReducedMotion
   derive pictures = p.media.filter(m => m.kind == "image")
+  derive faces = p.emoji.map(e => AtomFace(source=`[](emoji:${e.shortcode})`, label="", icon=e.url, title=`:${e.shortcode}:`, color="", backgroundColor="", direction="", ariaLabel=`:${e.shortcode}:`))
   action reveal
     revealed = not revealed
   action view(m: Media)
@@ -721,8 +736,9 @@ component PostRow
   action down
     tagged = false
   action tag(e: AtomEvent)
-    tagged = true
-    openTag(e)
+    if e.kind == "hashtag"
+      tagged = true
+      openTag(e)
   action pressed
     if not tagged
       open(p)
@@ -763,9 +779,9 @@ component PostRow
                 image "symbol:repeat" aria-hidden=true
                 if p.boostedAvatar != ""
                   image p.boostedAvatar width=16 height=16 border-radius=8 object-fit="cover" alt=""
-                text `${p.boostedBy} boosted` testId=`${prefix}boosted-${p.id}`
+                text `${p.boostedByMarkup} boosted` markup="markdown" atoms="emoji" atomFaces=faces testId=`${prefix}boosted-${p.id}`
             row gap=6 align-items="center" flex-wrap="wrap"
-              text p.name role="heading" aria-level=3 font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
+              text p.nameMarkup markup="markdown" atoms="emoji" atomFaces=faces role="heading" aria-level=3 font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word" font-weight=600 testId=`${prefix}name-${p.id}`
               image (p.visibility == "public" ? "symbol:icon.globe" : p.visibility == "unlisted" ? "symbol:moon" : p.visibility == "private" ? "symbol:lock" : "symbol:at")
                 aria-label=(p.visibility == "public" ? "Public" : p.visibility == "unlisted" ? "Quiet public" : p.visibility == "private" ? "Followers only" : "Mentioned people only")
                 font="-exact-footnote" width="1em" height="1em" flex-shrink=0 color="-exact-secondary-label" testId=`${prefix}visibility-${p.id}`
@@ -774,7 +790,7 @@ component PostRow
                   text "· " aria-hidden=true
                   time datetime=p.posted format="relative" testId=`${prefix}time-${p.id}`
             text p.handle overflow-wrap="break-word" font="-exact-footnote" color="-exact-secondary-label"
-            text p.text markup="markdown" atoms="hashtag" atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
+            text p.text markup="markdown" atoms="hashtag emoji" atomFaces=faces atompress=tag overflow-wrap="break-word" margin-top=4 font=(focused ? "-exact-title3" : "-exact-body") testId=`${prefix}text-${p.id}`
             if focused
               row gap=6 flex-wrap="wrap" margin-top=8 font="-exact-footnote" color="-exact-secondary-label" testId=`${prefix}posted-${p.id}`
                 time datetime=p.posted format="date-medium"

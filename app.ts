@@ -165,11 +165,28 @@ function plainText(html: string): string {
 
 const escapeMarkdown = (text: string) => text.replace(/[\\`*_[\]~#<>|!-]/g, '\\$&');
 
+type EmojiJson = { shortcode: string; url: string; static_url?: string };
+
+// A custom emoji is an empty link with the `emoji:` scheme, which the view draws as its image.
+function emojify(text: string, emojis: EmojiJson[]): string {
+  const known = new Set(emojis.map((e) => e.shortcode));
+  return text.split(/(:[a-zA-Z0-9_]+:)/).map((part, i) =>
+    i % 2 === 1 && known.has(part.slice(1, -1)) ? `[](emoji:${part.slice(1, -1)})` : escapeMarkdown(part)).join('');
+}
+
+// A name read aloud or in a title, where an image can't go, leaves its custom emoji out.
+function plainName(name: string, emojis: EmojiJson[], fallback: string): string {
+  const known = new Set(emojis.map((e) => e.shortcode));
+  return name.replace(/:([a-zA-Z0-9_]+):/g, (m, code: string) => (known.has(code) ? '' : m)).replace(/\s+/g, ' ').trim() || fallback;
+}
+
+const toEmoji = (emojis: EmojiJson[]) => emojis.filter((e) => web(e.url)).map((e) => ({ shortcode: e.shortcode, url: e.url }));
+
 const INLINE: Record<string, string> = { strong: '**', b: '**', em: '*', i: '*', del: '~~', s: '~~', code: '`' };
 
 // Mastodon's post HTML is a small allowlist (p, br, a, span, strong, em, del, code, pre,
 // blockquote, ul, ol, li), which maps onto Markdown; other tags keep only their text.
-function markdown(html: string, host: string): string {
+function markdown(html: string, host: string, emojis: EmojiJson[] = []): string {
   type Frame = { tag: string; out: string; href?: string; skip?: boolean; ellipsis?: boolean; index?: number };
   const stack: Frame[] = [{ tag: '', out: '' }];
   const top = () => stack[stack.length - 1];
@@ -177,7 +194,8 @@ function markdown(html: string, host: string): string {
   for (const [, close, name, attrs, text] of html.matchAll(/<(\/?)([a-z0-9]+)([^>]*)>|([^<]+)/gi)) {
     if (text !== undefined) {
       const decoded = decode(text);
-      top().out += inPre() || stack.some((f) => f.tag === 'code') ? decoded : escapeMarkdown(decoded);
+      top().out += inPre() || stack.some((f) => f.tag === 'code') ? decoded
+        : stack.some((f) => f.tag === 'a') ? escapeMarkdown(decoded) : emojify(decoded, emojis);
       continue;
     }
     const tag = name.toLowerCase();
@@ -235,7 +253,8 @@ type Status = {
   favourites_count: number;
   favourited?: boolean;
   reblogged?: boolean;
-  account: { id: string; username: string; acct: string; display_name: string; avatar: string };
+  account: { id: string; username: string; acct: string; display_name: string; avatar: string; emojis?: EmojiJson[] };
+  emojis?: EmojiJson[];
   mentions?: { id: string; acct: string }[];
   reblog: Status | null;
   sensitive?: boolean;
@@ -313,14 +332,20 @@ function toPost(status: Status, host: string): Post {
   const shown = status.reblog ?? status;
   const { account } = shown;
   const booster = status.reblog ? status.account : null;
+  const named = account.emojis ?? [];
+  const boosterNamed = booster?.emojis ?? [];
+  const emojis = [...(shown.emojis ?? []), ...named, ...boosterNamed];
   return {
     id: status.id,
     statusId: shown.id,
-    name: account.display_name || account.username,
+    name: plainName(account.display_name, named, account.username),
+    nameMarkup: emojify(account.display_name || account.username, named),
     handle: `@${account.acct}`,
     avatar: account.avatar,
-    text: markdown(shown.content, host),
-    boostedBy: booster ? booster.display_name || booster.username : '',
+    text: markdown(shown.content, host, shown.emojis ?? []),
+    boostedBy: booster ? plainName(booster.display_name, boosterNamed, booster.username) : '',
+    boostedByMarkup: booster ? emojify(booster.display_name || booster.username, boosterNamed) : '',
+    emoji: toEmoji(emojis),
     boostedAvatar: booster?.avatar ?? '',
     posted: Date.parse(shown.created_at),
     visibility: shown.visibility,
@@ -375,9 +400,9 @@ const threads = new Map<string, Thread>();
 const acted = new Set<string>();
 
 const GONE: Post = {
-  id: '', statusId: '', name: '', handle: '', avatar: '', text: '', boostedBy: '', boostedAvatar: '', posted: 0,
+  id: '', statusId: '', name: '', nameMarkup: '', handle: '', avatar: '', text: '', boostedBy: '', boostedByMarkup: '', boostedAvatar: '', posted: 0,
   visibility: '', replies: 0, reblogs: 0, favourites: 0, reblogged: false, favourited: false, accountId: '',
-  pinned: false, media: [], sensitive: false, card: { url: '', title: '', description: '', image: '', alt: '', provider: '' },
+  pinned: false, media: [], sensitive: false, card: { url: '', title: '', description: '', image: '', alt: '', provider: '' }, emoji: [],
 };
 
 async function loadThread(host: string, id: string, store: Store): Promise<Thread> {
@@ -453,7 +478,9 @@ async function loadPerson(host: string, id: string, store: Store): Promise<Perso
   const person: Person = {
     host,
     id,
-    name: account.display_name || account.username,
+    name: plainName(account.display_name, account.emojis ?? [], account.username),
+    nameMarkup: emojify(account.display_name || account.username, account.emojis ?? []),
+    emoji: toEmoji(account.emojis ?? []),
     handle: account.acct.includes('@') ? `@${account.acct}` : `@${account.acct}@${host}`,
     avatar: account.avatar,
     // Mastodon names a placeholder image when no banner is set.
