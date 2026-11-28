@@ -18,6 +18,8 @@ shape Emoji
   // A still frame of an animated emoji, for Reduce Motion.
   staticUrl: string
 
+fn emojiFace(e: Emoji, still: bool): AtomFace = AtomFace(source=`[](emoji:${e.shortcode})`, label="", icon=(still ? e.staticUrl : e.url), title=`:${e.shortcode}:`, color="", backgroundColor="", direction="", ariaLabel=`:${e.shortcode}:`)
+
 shape Post
   id: string
   statusId: string
@@ -88,8 +90,10 @@ shape Thread
 
 shape Field
   key: string
+  // Markdown, for its custom emoji.
   name: string
   value: string
+  emoji: Emoji[]
 
 // An account's profile and its posts: pinned ones first, then the rest newest first.
 shape Person
@@ -501,11 +505,15 @@ component PersonView
   derive error = match failure(who) { case some(f) => (f.code == "not-found" ? "This account isn't available." : f.code == "auth-required" ? "This server only shows profiles to signed-in users." : f.code == "auth-expired" ? "Log in again to see this profile." : "Couldn't load the profile."), case none => "" }
   derive followLabel = who.followed ? "Unfollow" : who.requested ? "Requested" : "Follow"
   resource motion = exactViewport() as shape Motion
-  derive faces = who.emoji.map(e => AtomFace(source=`[](emoji:${e.shortcode})`, label="", icon=(motion.prefersReducedMotion ? e.staticUrl : e.url), title=`:${e.shortcode}:`, color="", backgroundColor="", direction="", ariaLabel=`:${e.shortcode}:`))
+  derive faces = who.emoji.map(e => emojiFace(e, motion.prefersReducedMotion))
   derive avatar = Media(id="avatar", kind="image", url=who.avatar, preview=who.avatar, description=`${who.name}'s profile picture`, ratio=1)
   action viewAvatar
     zoom([avatar], avatar)
 
+  // A custom emoji in the bio is a link too, but only a hashtag goes anywhere.
+  action tag(e: AtomEvent)
+    if e.kind == "hashtag"
+      openTag(e)
   action open(p: Post)
     show(host, p.statusId)
   action openPerson(p: Post)
@@ -567,13 +575,13 @@ component PersonView
                 text who.nameMarkup markup="markdown" atoms="emoji" atomFaces=faces font="-exact-title2" font-weight=700 overflow-wrap="break-word" testId="person-name"
                 text who.handle font="-exact-subheadline" color="-exact-secondary-label" overflow-wrap="break-word" testId="person-handle"
               if who.bio != ""
-                text who.bio markup="markdown" atoms="hashtag" atompress=openTag overflow-wrap="break-word" testId="person-bio"
+                text who.bio markup="markdown" atoms="hashtag emoji" atomFaces=faces atompress=tag overflow-wrap="break-word" testId="person-bio"
               if who.fields.length > 0
                 column gap=6 testId="person-fields"
                   for f in who.fields key=f.key
                     row gap=8 flex-wrap="wrap" align-items="baseline"
-                      text f.name font="-exact-subheadline" font-weight=600 testId=`field-name-${f.key}`
-                      text f.value markup="markdown" overflow-wrap="break-word" min-width=0 testId=`field-value-${f.key}`
+                      text f.name markup="markdown" atoms="emoji" atomFaces=f.emoji.map(e => emojiFace(e, motion.prefersReducedMotion)) font="-exact-subheadline" font-weight=600 testId=`field-name-${f.key}`
+                      text f.value markup="markdown" atoms="emoji" atomFaces=f.emoji.map(e => emojiFace(e, motion.prefersReducedMotion)) overflow-wrap="break-word" min-width=0 testId=`field-value-${f.key}`
               row gap=16 flex-wrap="wrap" font="-exact-subheadline" testId="person-counts"
                 text `${who.statuses} ${who.statuses == 1 ? "post" : "posts"}` testId="person-statuses"
                 text `${who.following} following` testId="person-following"
@@ -731,7 +739,7 @@ component PostRow
   resource motion = exactViewport() as shape Motion
   derive still = motion.prefersReducedMotion
   derive pictures = p.media.filter(m => m.kind == "image")
-  derive faces = p.emoji.map(e => AtomFace(source=`[](emoji:${e.shortcode})`, label="", icon=(still ? e.staticUrl : e.url), title=`:${e.shortcode}:`, color="", backgroundColor="", direction="", ariaLabel=`:${e.shortcode}:`))
+  derive faces = p.emoji.map(e => emojiFace(e, still))
   action reveal
     revealed = not revealed
   action view(m: Media)

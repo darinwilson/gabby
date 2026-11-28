@@ -155,7 +155,14 @@ const ADA = (host: string) => ({
 const PROFILES: Record<string, (host: string) => object> = {
   ada: ADA,
   lin: (host) => ({ ...LIN(host), acct: 'lin', locked: true, header: '', note: '', fields: [], followers_count: 3, following_count: 1, statuses_count: 0 }),
-  kim: (host) => ({ ...KIM(host), acct: 'kim', header: '', note: '', fields: [], followers_count: 0, following_count: 0, statuses_count: 1 }),
+  kim: (host) => ({
+    ...KIM(host), acct: 'kim', header: '',
+    note: '<p>Likes cats :blob_cat:</p>',
+    fields: [{ name: 'Pet :blob_cat:', value: 'Mochi :blob_cat:' }],
+    followers_count: 0,
+    following_count: 0,
+    statuses_count: 1,
+  }),
   me: () => ({ ...ME, header: '', note: '', fields: [], followers_count: 0, following_count: 1, statuses_count: 1 }),
 };
 const PROFILE_POSTS: Record<string, string[]> = { ada: ['2', '1'], lin: [], me: ['m1'], kim: ['e1'] };
